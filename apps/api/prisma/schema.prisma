@@ -1,0 +1,502 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("MEMBER")
+  orgId        String
+  org          Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs        AuditLog[]
+  approvals        ApprovalDecision[]
+  apiKeys          ApiKey[]
+  sentInvitations  Invitation[] @relation("InvitedBy")
+
+  @@map("users")
+}
+
+model Org {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users        User[]
+  agents       Agent[]
+  environments Environment[]
+  policies     Policy[]
+  integrations Integration[]
+  evalSuites   EvalSuite[]
+  auditLogs    AuditLog[]
+  apiKeys      ApiKey[]
+  invitations  Invitation[]
+  webhooks     Webhook[]
+
+  @@map("orgs")
+}
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  orgId      String
+  org        Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  name       String
+  keyHash    String
+  keyPrefix  String
+  isActive   Boolean   @default(true)
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@map("api_keys")
+}
+
+model Invitation {
+  id          String    @id @default(uuid())
+  orgId       String
+  org         Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  email       String
+  role        String    @default("MEMBER")
+  token       String    @unique @default(uuid())
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  invitedById String
+  invitedBy   User      @relation("InvitedBy", fields: [invitedById], references: [id])
+  createdAt   DateTime  @default(now())
+
+  @@map("invitations")
+}
+
+// ─── Phase 1: Agent Registry & Version Control ───────────────────────────────
+
+model Agent {
+  id          String   @id @default(uuid())
+  orgId       String
+  org         Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String
+  description String?
+  tags        String   @default("[]")
+  modelFamily String?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions     AgentVersion[]
+  configs      AgentConfig[]
+  evalRuns     EvalRun[]
+  driftReports DriftReport[]
+  sessions     Session[]
+
+  @@unique([orgId, slug])
+  @@map("agents")
+}
+
+model AgentVersion {
+  id           String    @id @default(uuid())
+  agentId      String
+  agent        Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  version      String
+  semver       String
+  changelog    String?
+  systemPrompt String?
+  modelId      String?
+  parameters   String    @default("{}")
+  tools        String    @default("[]")
+  status       String    @default("DRAFT")
+  publishedAt  DateTime?
+  deprecatedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  promotions    EnvironmentPromotion[]
+  evalRuns      EvalRun[]
+  driftReports  DriftReport[]
+  sessions      Session[]
+
+  @@unique([agentId, semver])
+  @@map("agent_versions")
+}
+
+// ─── Phase 2: Agent Configuration Management ─────────────────────────────────
+
+model Environment {
+  id               String   @id @default(uuid())
+  orgId            String
+  org              Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name             String
+  slug             String
+  type             String   @default("DEVELOPMENT")
+  description      String?
+  requiresApproval Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  configs          AgentConfig[]
+  promotionsTo     EnvironmentPromotion[] @relation("ToEnvironment")
+  promotionsFrom   EnvironmentPromotion[] @relation("FromEnvironment")
+  evalRuns         EvalRun[]
+  driftReports     DriftReport[]
+  sessions         Session[]
+
+  @@unique([orgId, slug])
+  @@map("environments")
+}
+
+model AgentConfig {
+  id            String      @id @default(uuid())
+  agentId       String
+  agent         Agent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  config        String      @default("{}")
+  overrides     String      @default("{}")
+  inheritFrom   String?
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  secrets ConfigSecret[]
+
+  @@unique([agentId, environmentId])
+  @@map("agent_configs")
+}
+
+model ConfigSecret {
+  id        String      @id @default(uuid())
+  configId  String
+  config    AgentConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  key       String
+  value     String
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([configId, key])
+  @@map("config_secrets")
+}
+
+// ─── Phase 3: Environment Promotion Workflows ─────────────────────────────────
+
+model EnvironmentPromotion {
+  id             String       @id @default(uuid())
+  agentVersionId String
+  agentVersion   AgentVersion @relation(fields: [agentVersionId], references: [id], onDelete: Cascade)
+  fromEnvId      String?
+  fromEnv        Environment? @relation("FromEnvironment", fields: [fromEnvId], references: [id])
+  toEnvId        String
+  toEnv          Environment  @relation("ToEnvironment", fields: [toEnvId], references: [id])
+  status         String       @default("PENDING")
+  triggeredBy    String?
+  notes          String?
+  promotedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  approvals ApprovalDecision[]
+
+  @@map("environment_promotions")
+}
+
+model ApprovalDecision {
+  id          String               @id @default(uuid())
+  promotionId String
+  promotion   EnvironmentPromotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User                 @relation(fields: [userId], references: [id])
+  decision    String
+  comment     String?
+  createdAt   DateTime             @default(now())
+
+  @@map("approval_decisions")
+}
+
+// ─── Phase 4: Evaluation & Regression Framework ───────────────────────────────
+
+model EvalSuite {
+  id          String   @id @default(uuid())
+  orgId       String
+  org         Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  tags        String   @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  cases EvalCase[]
+  runs  EvalRun[]
+
+  @@map("eval_suites")
+}
+
+model EvalCase {
+  id             String   @id @default(uuid())
+  suiteId        String
+  suite          EvalSuite @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  input          String   @default("{}")
+  expectedOutput String?
+  scoringFn      String   @default("exact_match")
+  weight         Float    @default(1.0)
+  tags           String   @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  results EvalCaseResult[]
+
+  @@map("eval_cases")
+}
+
+model EvalRun {
+  id             String       @id @default(uuid())
+  suiteId        String
+  suite          EvalSuite    @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  agentId        String
+  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentVersionId String?
+  agentVersion   AgentVersion? @relation(fields: [agentVersionId], references: [id])
+  environmentId  String?
+  environment    Environment?  @relation(fields: [environmentId], references: [id])
+  status         String       @default("QUEUED")
+  score          Float?
+  passRate       Float?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  metadata       String       @default("{}")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  results EvalCaseResult[]
+
+  @@map("eval_runs")
+}
+
+model EvalCaseResult {
+  id           String   @id @default(uuid())
+  runId        String
+  run          EvalRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  caseId       String
+  case         EvalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  actualOutput String?
+  score        Float?
+  passed       Boolean?
+  latencyMs    Int?
+  tokenCount   Int?
+  error        String?
+  metadata     String   @default("{}")
+  createdAt    DateTime @default(now())
+
+  @@map("eval_case_results")
+}
+
+// ─── Phase 5: Drift Detection Engine ─────────────────────────────────────────
+
+model DriftReport {
+  id             String       @id @default(uuid())
+  agentId        String
+  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentVersionId String?
+  agentVersion   AgentVersion? @relation(fields: [agentVersionId], references: [id])
+  environmentId  String?
+  environment    Environment?  @relation(fields: [environmentId], references: [id])
+  baselineRunId  String?
+  currentRunId   String?
+  driftScore     Float
+  severity       String
+  dimensions     String       @default("{}")
+  alertSent      Boolean      @default(false)
+  resolvedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@map("drift_reports")
+}
+
+model DriftBaseline {
+  id             String   @id @default(uuid())
+  agentId        String
+  agentVersionId String?
+  environmentId  String?
+  metrics        String   @default("{}")
+  capturedAt     DateTime @default(now())
+  isActive       Boolean  @default(true)
+
+  @@map("drift_baselines")
+}
+
+// ─── Phase 6: AI Session Capture ─────────────────────────────────────────────
+
+model Session {
+  id             String       @id @default(uuid())
+  agentId        String
+  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentVersionId String?
+  agentVersion   AgentVersion? @relation(fields: [agentVersionId], references: [id])
+  environmentId  String?
+  environment    Environment?  @relation(fields: [environmentId], references: [id])
+  externalId     String?
+  userId         String?
+  metadata       String       @default("{}")
+  tags           String       @default("[]")
+  startedAt      DateTime     @default(now())
+  endedAt        DateTime?
+  totalTokens    Int?
+  totalLatencyMs Int?
+  status         String       @default("ACTIVE")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  turns SessionTurn[]
+
+  @@map("sessions")
+}
+
+model SessionTurn {
+  id           String   @id @default(uuid())
+  sessionId    String
+  session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role         String
+  content      String   @default("{}")
+  toolCalls    String   @default("[]")
+  latencyMs    Int?
+  inputTokens  Int?
+  outputTokens Int?
+  metadata     String   @default("{}")
+  createdAt    DateTime @default(now())
+
+  @@map("session_turns")
+}
+
+// ─── Phase 7: GitHub & GitLab Integration ─────────────────────────────────────
+
+model Integration {
+  id          String   @id @default(uuid())
+  orgId       String
+  org         Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  type        String
+  name        String
+  config      String   @default("{}")
+  isActive    Boolean  @default(true)
+  installedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  webhookEvents WebhookEvent[]
+
+  @@map("integrations")
+}
+
+model WebhookEvent {
+  id            String      @id @default(uuid())
+  integrationId String
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  eventType     String
+  payload       String      @default("{}")
+  status        String      @default("RECEIVED")
+  processedAt   DateTime?
+  error         String?
+  createdAt     DateTime    @default(now())
+
+  @@map("webhook_events")
+}
+
+// ─── Phase 8: Governance & Policy Engine ─────────────────────────────────────
+
+model Policy {
+  id               String   @id @default(uuid())
+  orgId            String
+  org              Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  type             String
+  rules            String   @default("[]")
+  isEnabled        Boolean  @default(true)
+  enforcementLevel String   @default("WARN")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  violations PolicyViolation[]
+
+  @@map("policies")
+}
+
+model PolicyViolation {
+  id           String   @id @default(uuid())
+  policyId     String
+  policy       Policy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  resourceId   String
+  resourceType String
+  details      String   @default("{}")
+  severity     String
+  resolvedAt   DateTime?
+  createdAt    DateTime @default(now())
+
+  @@map("policy_violations")
+}
+
+// ─── Outgoing Webhooks ───────────────────────────────────────────────────────
+
+model Webhook {
+  id         String            @id @default(uuid())
+  orgId      String
+  org        Org               @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name       String
+  url        String
+  events     String            @default("[]")
+  secret     String
+  isActive   Boolean           @default(true)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  deliveries WebhookDelivery[]
+
+  @@map("webhooks")
+}
+
+model WebhookDelivery {
+  id         String   @id @default(uuid())
+  webhookId  String
+  webhook    Webhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  event      String
+  payload    String
+  statusCode Int?
+  response   String?
+  durationMs Int?
+  createdAt  DateTime @default(now())
+
+  @@map("webhook_deliveries")
+}
+
+// ─── Audit & Compliance Layer ─────────────────────────────────────────────────
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  orgId        String
+  org          Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  action       String
+  resourceType String
+  resourceId   String?
+  before       String?
+  after        String?
+  ipAddress    String?
+  userAgent    String?
+  metadata     String   @default("{}")
+  createdAt    DateTime @default(now())
+
+  @@map("audit_logs")
+}

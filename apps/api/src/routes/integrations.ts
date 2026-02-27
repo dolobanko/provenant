@@ -1,0 +1,132 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { prisma } from '../lib/prisma';
+import { authenticate, AuthRequest } from '../middleware/auth';
+import { auditLog } from '../middleware/audit';
+import { logger } from '../lib/logger';
+
+import type { IRouter } from 'express';
+export const integrationsRouter: IRouter = Router();
+integrationsRouter.use(authenticate);
+
+const createSchema = z.object({
+  type: z.enum(['GITHUB', 'GITLAB', 'SLACK', 'WEBHOOK']),
+  name: z.string().min(1),
+  config: z.record(z.unknown()).default({}),
+});
+
+integrationsRouter.get('/', async (req: AuthRequest, res, next) => {
+  try {
+    const integrations = await prisma.integration.findMany({
+      where: { orgId: req.user!.orgId },
+      include: { _count: { select: { webhookEvents: true } } },
+    });
+    // Mask sensitive config keys (config is auto-parsed by prisma middleware)
+    const safe = integrations.map((i) => ({
+      ...i,
+      config: Object.fromEntries(
+        Object.entries((i.config as unknown) as Record<string, unknown>).map(([k, v]) =>
+          k.toLowerCase().includes('secret') || k.toLowerCase().includes('token')
+            ? [k, '***']
+            : [k, v],
+        ),
+      ),
+    }));
+    res.json(safe);
+  } catch (err) { next(err); }
+});
+
+integrationsRouter.post('/', auditLog('integration.create', 'Integration'), async (req: AuthRequest, res, next) => {
+  try {
+    const body = createSchema.parse(req.body);
+    const integration = await prisma.integration.create({
+      data: {
+        type: body.type,
+        name: body.name,
+        config: JSON.stringify(body.config),
+        orgId: req.user!.orgId,
+      },
+    });
+    res.status(201).json(integration);
+  } catch (err) { next(err); }
+});
+
+integrationsRouter.patch('/:id', auditLog('integration.update', 'Integration'), async (req: AuthRequest, res, next) => {
+  try {
+    const body = createSchema.partial().parse(req.body);
+    const { id } = req.params;
+    const result = await prisma.integration.updateMany({
+      where: { id, orgId: req.user!.orgId },
+      data: {
+        ...(body.name !== undefined && { name: body.name }),
+        ...(body.type !== undefined && { type: body.type }),
+        ...(body.config !== undefined && { config: JSON.stringify(body.config) }),
+      },
+    });
+    if (result.count === 0) { res.status(404).json({ error: 'Not found' }); return; }
+    res.json(await prisma.integration.findUnique({ where: { id } }));
+  } catch (err) { next(err); }
+});
+
+integrationsRouter.delete('/:id', auditLog('integration.delete', 'Integration'), async (req: AuthRequest, res, next) => {
+  try {
+    await prisma.integration.deleteMany({ where: { id: req.params.id, orgId: req.user!.orgId } });
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+// Webhook receiver (no auth — uses integration secret for verification)
+integrationsRouter.post('/webhook/:integrationId', async (req, res, next) => {
+  try {
+    const integration = await prisma.integration.findUnique({ where: { id: req.params.integrationId } });
+    if (!integration || !integration.isActive) { res.status(404).json({ error: 'Not found' }); return; }
+
+    const eventType = (req.headers['x-github-event'] ?? req.headers['x-gitlab-event'] ?? 'unknown') as string;
+    const event = await prisma.webhookEvent.create({
+      data: {
+        integrationId: integration.id,
+        eventType,
+        payload: JSON.stringify(req.body),
+        status: 'RECEIVED',
+      },
+    });
+
+    // Process asynchronously
+    processWebhookEvent(event.id).catch((e) => logger.error('Webhook processing error', { e }));
+
+    res.json({ received: true, eventId: event.id });
+  } catch (err) { next(err); }
+});
+
+async function processWebhookEvent(eventId: string) {
+  const event = await prisma.webhookEvent.findUnique({ where: { id: eventId }, include: { integration: true } });
+  if (!event) return;
+
+  await prisma.webhookEvent.update({ where: { id: eventId }, data: { status: 'PROCESSING' } });
+
+  try {
+    logger.info('Processing webhook event', { type: event.eventType, integrationId: event.integrationId });
+    await prisma.webhookEvent.update({
+      where: { id: eventId },
+      data: { status: 'PROCESSED', processedAt: new Date() },
+    });
+  } catch (err) {
+    await prisma.webhookEvent.update({
+      where: { id: eventId },
+      data: { status: 'FAILED', error: String(err) },
+    });
+  }
+}
+
+integrationsRouter.get('/:id/events', async (req: AuthRequest, res, next) => {
+  try {
+    const integration = await prisma.integration.findFirst({ where: { id: req.params.id, orgId: req.user!.orgId } });
+    if (!integration) { res.status(404).json({ error: 'Not found' }); return; }
+    const events = await prisma.webhookEvent.findMany({
+      where: { integrationId: req.params.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    res.json(events);
+  } catch (err) { next(err); }
+});

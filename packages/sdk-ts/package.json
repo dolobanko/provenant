@@ -1,0 +1,16 @@
+{
+  "name": "@provenant/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Provenant AgentOps platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "keywords": ["provenant", "agentops", "ai", "observability"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

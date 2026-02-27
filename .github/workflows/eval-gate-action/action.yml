@@ -1,0 +1,164 @@
+name: Provenant Eval Gate
+description: Run a Provenant eval suite and fail if pass rate is below the threshold.
+author: Provenant
+
+inputs:
+  api_url:
+    description: Base URL of the Provenant API (e.g. https://api.example.com)
+    required: true
+  api_key:
+    description: Provenant API key (pk_live_...)
+    required: true
+  suite_id:
+    description: UUID of the eval suite to run
+    required: true
+  agent_id:
+    description: UUID of the agent to evaluate
+    required: true
+  agent_version_id:
+    description: UUID of the agent version (optional)
+    required: false
+    default: ""
+  environment_id:
+    description: UUID of the environment (optional)
+    required: false
+    default: ""
+  min_pass_rate:
+    description: Minimum pass rate (0–1) to pass the gate
+    required: false
+    default: "0.8"
+  poll_interval_seconds:
+    description: Seconds between status polls
+    required: false
+    default: "5"
+  timeout_seconds:
+    description: Max seconds to wait for completion
+    required: false
+    default: "300"
+
+outputs:
+  run_id:
+    description: ID of the created eval run
+    value: ${{ steps.create_run.outputs.run_id }}
+  pass_rate:
+    description: Final pass rate of the eval run
+    value: ${{ steps.poll.outputs.pass_rate }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create eval run
+      id: create_run
+      shell: bash
+      env:
+        API_URL: ${{ inputs.api_url }}
+        API_KEY: ${{ inputs.api_key }}
+        SUITE_ID: ${{ inputs.suite_id }}
+        AGENT_ID: ${{ inputs.agent_id }}
+        AGENT_VERSION_ID: ${{ inputs.agent_version_id }}
+        ENVIRONMENT_ID: ${{ inputs.environment_id }}
+      run: |
+        BODY=$(python3 -c "
+        import json, os
+        body = {
+          'suiteId': os.environ['SUITE_ID'],
+          'agentId': os.environ['AGENT_ID'],
+        }
+        vid = os.environ.get('AGENT_VERSION_ID','')
+        eid = os.environ.get('ENVIRONMENT_ID','')
+        if vid: body['agentVersionId'] = vid
+        if eid: body['environmentId'] = eid
+        print(json.dumps(body))
+        ")
+
+        RESPONSE=$(curl -sf \
+          -X POST "${API_URL}/api/evals/runs" \
+          -H "Authorization: Bearer ${API_KEY}" \
+          -H "Content-Type: application/json" \
+          -d "${BODY}")
+
+        RUN_ID=$(echo "${RESPONSE}" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+        echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+        echo "Created eval run: ${RUN_ID}"
+
+    - name: Poll until complete
+      id: poll
+      shell: bash
+      env:
+        API_URL: ${{ inputs.api_url }}
+        API_KEY: ${{ inputs.api_key }}
+        RUN_ID: ${{ steps.create_run.outputs.run_id }}
+        POLL_INTERVAL: ${{ inputs.poll_interval_seconds }}
+        TIMEOUT: ${{ inputs.timeout_seconds }}
+      run: |
+        python3 - <<'EOF'
+        import json, os, sys, time, urllib.request
+
+        api_url = os.environ['API_URL']
+        api_key = os.environ['API_KEY']
+        run_id = os.environ['RUN_ID']
+        poll_interval = float(os.environ.get('POLL_INTERVAL', '5'))
+        timeout = float(os.environ.get('TIMEOUT', '300'))
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            req = urllib.request.Request(
+                f"{api_url}/api/evals/runs/{run_id}",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    run = json.loads(resp.read())
+            except Exception as e:
+                print(f"Poll error: {e}", flush=True)
+                time.sleep(poll_interval)
+                continue
+
+            status = run.get("status", "")
+            pass_rate = run.get("passRate")
+            print(f"Status: {status} | Pass rate: {pass_rate}", flush=True)
+
+            if status in ("COMPLETED", "FAILED"):
+                with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                    f.write(f"status={status}\n")
+                    f.write(f"pass_rate={pass_rate if pass_rate is not None else ''}\n")
+                sys.exit(0)
+
+            time.sleep(poll_interval)
+
+        print(f"::error::Eval run did not complete within {timeout}s", flush=True)
+        sys.exit(1)
+        EOF
+
+    - name: Check pass rate
+      shell: bash
+      env:
+        STATUS: ${{ steps.poll.outputs.status }}
+        PASS_RATE: ${{ steps.poll.outputs.pass_rate }}
+        MIN_PASS_RATE: ${{ inputs.min_pass_rate }}
+      run: |
+        python3 - <<'EOF'
+        import os, sys
+
+        status = os.environ.get("STATUS", "")
+        pass_rate_str = os.environ.get("PASS_RATE", "")
+        min_pass_rate = float(os.environ.get("MIN_PASS_RATE", "0.8"))
+
+        if status == "FAILED":
+            print("::error::Eval run finished with status FAILED")
+            sys.exit(1)
+
+        if not pass_rate_str:
+            print("::warning::No pass rate reported — skipping gate check")
+            sys.exit(0)
+
+        pass_rate = float(pass_rate_str)
+        pct = round(pass_rate * 100, 1)
+        min_pct = round(min_pass_rate * 100, 1)
+
+        if pass_rate < min_pass_rate:
+            print(f"::error::Eval gate failed: pass rate {pct}% < required {min_pct}%")
+            sys.exit(1)
+
+        print(f"Eval gate passed: pass rate {pct}% >= required {min_pct}%")
+        EOF

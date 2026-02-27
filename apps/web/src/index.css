@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { font-family: 'Inter', system-ui, sans-serif; }
+  body { @apply bg-gray-950 text-gray-100; }
+  * { @apply border-gray-800; }
+}
+
+@layer components {
+  .card { @apply bg-gray-900 rounded-xl border border-gray-800 p-6; }
+  .btn-primary { @apply bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors; }
+  .btn-secondary { @apply bg-gray-800 hover:bg-gray-700 text-gray-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors; }
+  .btn-danger { @apply bg-red-900 hover:bg-red-800 text-red-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors; }
+  .input { @apply bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent w-full; }
+  .label { @apply block text-xs font-medium text-gray-400 mb-1; }
+  .badge { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium; }
+  .badge-green { @apply badge bg-green-900 text-green-300; }
+  .badge-yellow { @apply badge bg-yellow-900 text-yellow-300; }
+  .badge-red { @apply badge bg-red-900 text-red-300; }
+  .badge-blue { @apply badge bg-blue-900 text-blue-300; }
+  .badge-gray { @apply badge bg-gray-800 text-gray-400; }
+  .badge-purple { @apply badge bg-purple-900 text-purple-300; }
+  .table-header { @apply text-left text-xs font-medium text-gray-500 uppercase tracking-wider py-3 px-4; }
+  .table-cell { @apply py-3 px-4 text-sm text-gray-300; }
+  .table-row { @apply border-b border-gray-800 hover:bg-gray-800/50 transition-colors; }
+}
