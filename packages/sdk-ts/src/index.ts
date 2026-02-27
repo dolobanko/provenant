@@ -2,6 +2,7 @@ export { ProvenantClient } from './client';
 export { HttpError } from './http';
 export { instrument } from './instrument';
 export type { InstrumentOptions } from './instrument';
+export { _activeSession } from './session-context';
 export type {
   ProvenantConfig,
   Agent,
@@ -15,4 +16,5 @@ export type {
   CreateEvalRunOptions,
   SubmitResultOptions,
   WaitForCompletionOptions,
+  WithSessionOptions,
 } from './types';

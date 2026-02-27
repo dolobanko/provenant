@@ -2,23 +2,19 @@
 
 TypeScript/JavaScript SDK for [Provenant](https://provenant.dev) AgentOps — the platform for testing, monitoring, and governing AI agents in production.
 
-**No external dependencies** — works in Node.js 18+ (uses native `fetch`).
+**No external dependencies** — works in Node.js 18+ (uses native `fetch` and `AsyncLocalStorage`).
 
 ---
 
-## Installation
+## Install
 
 ```bash
 npm install @provenant/sdk
-# or
-pnpm add @provenant/sdk
 ```
 
 ---
 
 ## Quick Start — Auto-instrumentation
-
-One function call wraps your existing Anthropic or OpenAI client and automatically records every LLM call as a Provenant session.
 
 ### Anthropic
 
@@ -27,15 +23,15 @@ import Anthropic from '@anthropic-ai/sdk';
 import { instrument } from '@provenant/sdk';
 
 const client = instrument(new Anthropic(), {
-  apiKey: 'pk_live_...',          // from Provenant → API Keys
-  agentId: 'My Support Bot',      // name or UUID — auto-created if new
+  apiKey: 'pk_live_...',        // from /api-keys in the dashboard
+  agentId: 'My Support Bot',    // name → auto-created; or pass a UUID directly
   baseUrl: 'https://api.provenant.dev',
 });
 
-// Zero changes below — sessions, turns, tokens recorded automatically
+// Zero changes below — sessions, turns, and token counts recorded automatically
 const response = await client.messages.create({
   model: 'claude-opus-4-5',
-  messages: [{ role: 'user', content: 'Hello, how can I help?' }],
+  messages: [{ role: 'user', content: 'Hello!' }],
   max_tokens: 1024,
 });
 console.log(response.content[0].text);
@@ -49,70 +45,153 @@ import { instrument } from '@provenant/sdk';
 
 const client = instrument(new OpenAI(), {
   apiKey: 'pk_live_...',
-  agentId: 'My Support Bot',
+  agentId: 'My GPT Bot',
   baseUrl: 'https://api.provenant.dev',
 });
 
 const response = await client.chat.completions.create({
   model: 'gpt-4o',
-  messages: [{ role: 'user', content: 'Hello' }],
+  messages: [{ role: 'user', content: 'Hello!' }],
 });
 console.log(response.choices[0].message.content);
 ```
 
-The returned value is a transparent **Proxy** — it has the exact same TypeScript type as the original client, so your IDE autocomplete and type checking work without changes.
+---
 
-Each call automatically records: session creation, USER turn, ASSISTANT turn (with token counts + latency), session end.
+## Multi-Turn Session Stitching
 
-**Provenant API failures are silently swallowed** (`.catch(() => {})`) — your agent never breaks even if observability is down.
+By default, each `messages.create` call creates its own isolated session. For agents that make multiple LLM calls in a loop (tool use, multi-turn conversations), use `prov.withSession()` to group them into one session:
+
+```typescript
+import { ProvenantClient, instrument } from '@provenant/sdk';
+
+const prov = new ProvenantClient({ baseUrl: 'https://api.provenant.dev', apiKey: 'pk_live_...' });
+const client = instrument(new Anthropic(), { apiKey: 'pk_live_...', agentId: '<uuid>', baseUrl: '...' });
+
+await prov.withSession(
+  '<agent-uuid>',
+  { userId: 'user-123', externalId: 'conversation-abc' },
+  async (sessionId) => {
+    // Turn 1 — LLM decides to call a tool
+    const r1 = await client.messages.create({
+      model: 'claude-opus-4-5',
+      messages: [{ role: 'user', content: "What's the weather in Paris?" }],
+      max_tokens: 512,
+    });
+
+    // Turn 2 — send tool result back, get final answer
+    const r2 = await client.messages.create({
+      model: 'claude-opus-4-5',
+      messages: [
+        { role: 'user', content: "What's the weather in Paris?" },
+        { role: 'assistant', content: r1.content },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: '...', content: '22°C, sunny' }] },
+      ],
+      max_tokens: 512,
+    });
+  },
+);
+// Session ended automatically — dashboard shows one session with 4 turns
+```
 
 ---
 
-## `getOrCreate` — skip the UUID
+## Tool Calls
 
-Pass a human-readable name instead of a UUID to `instrument()`. The agent is created on first run and reused forever:
+Tool calls and tool results are captured automatically — no code changes needed.
+
+When the LLM returns `tool_use` blocks (Anthropic) or `tool_calls` (OpenAI), they appear in the ASSISTANT turn's `toolCalls` field in the dashboard. Tool result messages are recorded as `TOOL` role turns.
 
 ```typescript
-import { ProvenantClient } from '@provenant/sdk';
+// Tool call — captured automatically
+const response = await client.messages.create({
+  model: 'claude-opus-4-5',
+  tools: [{ name: 'web_search', description: '...', input_schema: { ... } }],
+  messages: [{ role: 'user', content: 'Search for recent AI news' }],
+  max_tokens: 1024,
+});
+// tool_use blocks in response.content → stored in session turn's toolCalls
 
-const prov = new ProvenantClient({
-  baseUrl: 'https://api.provenant.dev',
-  apiKey: 'pk_live_...',
+// Tool result in next call → recorded as TOOL turn automatically
+await client.messages.create({
+  model: 'claude-opus-4-5',
+  messages: [
+    { role: 'user', content: 'Search for recent AI news' },
+    { role: 'assistant', content: response.content },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_123', content: '...results...' }] },
+  ],
+  max_tokens: 1024,
+});
+```
+
+---
+
+## Streaming
+
+Streaming is fully supported. Chunks are yielded to your code in real time; Provenant records the full aggregated response after the stream completes.
+
+```typescript
+// Async-iterable streaming (Anthropic / OpenAI with stream: true)
+const stream = await client.messages.create({
+  model: 'claude-opus-4-5',
+  messages: [{ role: 'user', content: 'Tell me a story' }],
+  max_tokens: 1024,
+  stream: true,
 });
 
-const agent = await prov.agents.getOrCreate('My Support Bot');
-console.log(agent.id); // same UUID every time
+for await (const chunk of stream) {
+  if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+    process.stdout.write(chunk.delta.text);
+  }
+}
+// Provenant records after the loop ends
+```
+
+---
+
+## Optional Session Parameters
+
+Enrich every session this client creates by passing these to `instrument()`:
+
+```typescript
+const client = instrument(new Anthropic(), {
+  apiKey: 'pk_live_...',
+  agentId: 'Support Bot',
+  baseUrl: 'https://api.provenant.dev',
+  userId: 'user-456',                // link sessions to a specific user
+  agentVersionId: '<version-uuid>',  // which deployed version
+  environmentId: '<env-uuid>',       // prod / staging / dev environment
+  externalId: 'conv-789',            // your own conversation / thread ID
+});
 ```
 
 ---
 
 ## Manual Session Recording
 
-For full control over multi-turn conversations:
+For full control without auto-instrumentation:
 
 ```typescript
 import { ProvenantClient } from '@provenant/sdk';
 
-const prov = new ProvenantClient({
-  baseUrl: 'https://api.provenant.dev',
-  apiKey: 'pk_live_...',
-});
+const prov = new ProvenantClient({ baseUrl: 'https://api.provenant.dev', apiKey: 'pk_live_...' });
 
-const session = await prov.sessions.create({ agentId: '<agent-uuid>' });
-
+const session = await prov.sessions.create({ agentId: '<uuid>', userId: 'u1' });
 await prov.sessions.addTurn(session.id, { role: 'USER', content: 'Hello' });
-
-// ... call your LLM ...
-
-await prov.sessions.addTurn(session.id, {
-  role: 'ASSISTANT',
-  content: 'Hi! How can I help?',
-  latencyMs: 312,
-  inputTokens: 15,
-  outputTokens: 42,
-});
-
+await prov.sessions.addTurn(session.id, { role: 'ASSISTANT', content: 'Hi there!', latencyMs: 342 });
 await prov.sessions.end(session.id);
+```
+
+---
+
+## get_or_create_agent
+
+Get or create an agent by name — idempotent, safe to call on startup:
+
+```typescript
+const prov = new ProvenantClient({ baseUrl: '...', apiKey: 'pk_live_...' });
+const agent = await prov.agents.getOrCreate('My Support Bot');
+// returns the same agent UUID every time
 ```
 
 ---
@@ -120,42 +199,56 @@ await prov.sessions.end(session.id);
 ## Evals
 
 ```typescript
-const run = await prov.evals.createRun({
-  suiteId: '<suite-uuid>',
-  agentId: '<agent-uuid>',
-});
+const run = await prov.evals.createRun({ suiteId: '<suite-uuid>', agentId: '<agent-uuid>' });
 
-await prov.evals.submitResults(run.id, {
-  results: [{ caseId: '<case-uuid>', passed: true, score: 1.0, output: '...' }],
-});
+const results = await Promise.all(
+  testCases.map(async (tc) => ({
+    caseId: tc.id,
+    actualOutput: await yourAgent(tc.input),
+    passed: true,
+    latencyMs: 120,
+  }))
+);
 
+await prov.evals.submitResults(run.id, results);
 const completed = await prov.evals.waitForCompletion(run.id);
-console.log(`Pass rate: ${(completed.passRate ?? 0) * 100}%`);
+console.log(`Score: ${completed.score}, Pass rate: ${completed.passRate}`);
 ```
 
 ---
 
 ## API Reference
 
-| Export | Description |
+| Method | Description |
 |--------|-------------|
-| `instrument(client, opts)` | Auto-instrument Anthropic or OpenAI client |
-| `ProvenantClient` | Main API client class |
-| `prov.agents.list()` | List all agents |
-| `prov.agents.get(id)` | Get agent by ID |
-| `prov.agents.create(opts)` | Create a new agent |
-| `prov.agents.getOrCreate(name)` | Return agent, creating if absent |
-| `prov.sessions.create(opts)` | Start a session |
-| `prov.sessions.addTurn(id, turn)` | Add a conversation turn |
-| `prov.sessions.end(id, opts)` | End a session |
+| `instrument(client, opts)` | One-liner instrumentation for Anthropic / OpenAI clients |
+| `new ProvenantClient(config)` | Raw API client |
+| `prov.withSession(agentId, opts, fn)` | Group multiple LLM calls into one session |
+| `prov.agents.getOrCreate(name)` | Idempotently get or create an agent → returns `Agent` |
+| `prov.sessions.create(opts)` | Create a session manually |
+| `prov.sessions.addTurn(sessionId, opts)` | Add a turn (`USER` / `ASSISTANT` / `SYSTEM` / `TOOL`) |
+| `prov.sessions.end(sessionId, opts?)` | End a session |
 | `prov.evals.createRun(opts)` | Start an eval run |
-| `prov.evals.submitResults(id, results)` | Submit eval results |
-| `prov.evals.waitForCompletion(id, opts)` | Poll until run completes |
+| `prov.evals.submitResults(runId, results)` | Submit eval case results |
+| `prov.evals.waitForCompletion(runId, opts?)` | Poll until the eval run finishes |
+
+### `InstrumentOptions`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `apiKey` | `string` | Provenant API key (`pk_live_...`) |
+| `agentId` | `string` | Agent UUID or human-readable name |
+| `baseUrl` | `string?` | API base URL (default: `https://api.provenant.dev`) |
+| `timeout` | `number?` | HTTP timeout in ms (default: 10 000) |
+| `userId` | `string?` | Forwarded to every session |
+| `agentVersionId` | `string?` | Forwarded to every session |
+| `environmentId` | `string?` | Forwarded to every session |
+| `externalId` | `string?` | Forwarded to every session |
 
 ---
 
-## Limitations
+## Notes
 
-- **Streaming not supported** — `stream: true` responses are not recorded.
-- **Single-turn sessions** — `instrument()` creates one session per `messages.create` call. For multi-turn tracking, use `ProvenantClient` directly.
-- **Node.js 18+** required for native `fetch`. Use a polyfill for older versions.
+- Provenant API failures are **never raised** — swallowed with `.catch(() => {})` so your agent keeps running even if the observability layer is down.
+- Streaming responses are buffered to completion before recording; individual chunk events are not tracked separately.
+- Requires Node.js 18+ for native `fetch` and `AsyncLocalStorage`.

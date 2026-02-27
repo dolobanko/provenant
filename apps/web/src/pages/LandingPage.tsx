@@ -2,68 +2,74 @@ import { useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import {
   ChevronRight, MessageSquare, Activity, FlaskConical, Shield,
-  GitBranch, Zap, ArrowRight, Terminal, Check,
+  GitBranch, Zap, ArrowRight, Terminal, Check, Wrench, Layers,
 } from 'lucide-react';
 import { getUser } from '../lib/auth';
 
 // ── Code snippets ──────────────────────────────────────────────────────────
 
-const TS_SNIPPET = `import { ProvenantClient } from '@provenant/sdk';
+const TS_SNIPPET = `import Anthropic from '@anthropic-ai/sdk';
+import { instrument } from '@provenant/sdk';
 
-const client = new ProvenantClient({
-  baseUrl: process.env.PROVENANT_URL,
-  apiKey:  process.env.PROVENANT_API_KEY,
+// One line — every LLM call recorded automatically
+const client = instrument(new Anthropic(), {
+  apiKey:  'pk_live_...',
+  agentId: 'support-bot',   // name → auto-created in dashboard
+  baseUrl: 'https://api.provenant.dev',
 });
 
-// Create a session for your agent
-const session = await client.sessions.create({
-  agentId: 'my-support-bot',
-});
+// Zero changes to your existing agent code
+const response = await client.messages.create({
+  model: 'claude-opus-4-5',
+  messages: [{ role: 'user', content: userMessage }],
+  max_tokens: 1024,
+});`;
 
-// Record every turn
-await client.sessions.addTurn(session.id, {
-  role: 'USER',
-  content: userMessage,
-  inputTokens: 120,
-});
+const PY_SNIPPET = `import anthropic
+from provenant_sdk import instrument
 
-await client.sessions.addTurn(session.id, {
-  role: 'ASSISTANT',
-  content: agentResponse,
-  outputTokens: 340,
-  latencyMs: 820,
-});
-
-await client.sessions.end(session.id);`;
-
-const PY_SNIPPET = `from provenant_sdk import ProvenantClient
-import os
-
-client = ProvenantClient(
-    base_url=os.environ["PROVENANT_URL"],
-    api_key=os.environ["PROVENANT_API_KEY"],
+# One line — every LLM call recorded automatically
+client = instrument(
+    anthropic.Anthropic(),
+    api_key="pk_live_...",
+    agent_id="support-bot",   # name → auto-created in dashboard
+    base_url="https://api.provenant.dev",
 )
 
-# Create a session for your agent
-session = client.create_session(agent_id="my-support-bot")
+# Zero changes to your existing agent code
+response = client.messages.create(
+    model="claude-opus-4-5",
+    messages=[{"role": "user", "content": user_message}],
+    max_tokens=1024,
+)`;
 
-# Record every turn
-client.add_turn(
-    session["id"],
-    role="USER",
-    content=user_message,
-    input_tokens=120,
-)
+const MULTITURN_SNIPPET = `from provenant_sdk import ProvenantClient, instrument
 
-client.add_turn(
-    session["id"],
-    role="ASSISTANT",
-    content=agent_response,
-    output_tokens=340,
-    latency_ms=820,
-)
+prov = ProvenantClient(base_url="...", api_key="pk_live_...")
+client = instrument(anthropic.Anthropic(), api_key="pk_live_...",
+                    agent_id="<uuid>", base_url="...")
 
-client.end_session(session["id"])`;
+# Group a full agent loop into one session with multiple turns
+with prov.session(agent_id, user_id="u123") as sid:
+
+    # Turn 1 — agent calls a tool
+    r1 = client.messages.create(
+        model="claude-opus-4-5",
+        tools=[web_search_tool],
+        messages=[{"role": "user", "content": query}],
+        max_tokens=1024,
+    )
+    # tool_use block → captured in ASSISTANT turn automatically
+
+    # Turn 2 — agent gets tool result, answers
+    r2 = client.messages.create(
+        model="claude-opus-4-5",
+        messages=[..., tool_result_message],
+        max_tokens=1024,
+    )
+    # tool_result → TOOL turn; final answer → ASSISTANT turn
+
+# Session ended automatically — 4 turns in the dashboard`;
 
 const CI_SNIPPET = `# .github/workflows/deploy.yml
 - name: Run eval gate
@@ -72,12 +78,10 @@ const CI_SNIPPET = `# .github/workflows/deploy.yml
     api_url:       \${{ vars.PROVENANT_URL }}
     api_key:       \${{ secrets.PROVENANT_API_KEY }}
     suite_id:      'a1b2c3d4-...'
-    agent_id:      'my-support-bot'
-    min_pass_rate: '0.85'   # fail PR if < 85% pass`;
+    agent_id:      'support-bot'
+    min_pass_rate: '0.85'   # block merge if < 85% pass`;
 
 // ── Syntax highlight helpers ───────────────────────────────────────────────
-// Single-pass tokeniser — each character is consumed only once, so
-// there is no risk of a later regex matching inside an already-emitted tag.
 
 type Token = { t: 'kw1' | 'kw2' | 'str' | 'comment' | 'plain'; v: string };
 
@@ -100,7 +104,7 @@ function tokeniseTS(src: string): Token[] {
 
 function tokenisePY(src: string): Token[] {
   const tokens: Token[] = [];
-  const re = /(#[^\n]*)|("(?:[^"\\]|\\.)*")|(\b(?:from|import|os|None|True|False)\b)|(\b(?:def|return|if|else|for|in|with|as|not|and|or)\b)/g;
+  const re = /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b(?:from|import|os|None|True|False|with|as)\b)|(\b(?:def|return|if|else|for|in|not|and|or|await|async)\b)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) {
@@ -151,7 +155,14 @@ const FEATURES = [
     color: 'text-blue-400',
     bg: 'bg-blue-900/30',
     title: 'Session Replay',
-    desc: 'Capture every turn of every agent conversation. Replay, inspect tool calls, and debug failures with full token-level detail.',
+    desc: 'Capture every turn of every agent conversation with full tool call and token-level detail. Replay and debug failures in seconds.',
+  },
+  {
+    icon: Wrench,
+    color: 'text-cyan-400',
+    bg: 'bg-cyan-900/30',
+    title: 'Tool Call Tracking',
+    desc: 'Automatic capture of tool_use blocks and tool_results. See exactly what tools your agent called, what inputs it used, and what it got back.',
   },
   {
     icon: Activity,
@@ -165,14 +176,14 @@ const FEATURES = [
     color: 'text-purple-400',
     bg: 'bg-purple-900/30',
     title: 'Eval Framework',
-    desc: 'Build test suites with custom scoring functions. Import pre-built templates for customer support, coding agents, and RAG pipelines.',
+    desc: 'Build test suites with AI-generated test cases and custom scoring. Block deploys when pass rate drops below your threshold.',
   },
   {
-    icon: Shield,
-    color: 'text-green-400',
-    bg: 'bg-green-900/30',
-    title: 'Policy Engine',
-    desc: 'Enforce content, rate-limit, and deployment policies with configurable rules. Auto-block or notify on violations.',
+    icon: Layers,
+    color: 'text-indigo-400',
+    bg: 'bg-indigo-900/30',
+    title: 'Multi-Turn Sessions',
+    desc: 'Group entire agent loops — tool calls, retries, follow-ups — into a single session. See the full execution path, not just isolated calls.',
   },
   {
     icon: GitBranch,
@@ -180,6 +191,13 @@ const FEATURES = [
     bg: 'bg-brand-900/30',
     title: 'Prompt Versioning',
     desc: 'Version every system prompt, compare diffs across releases, and roll back to any previous version instantly.',
+  },
+  {
+    icon: Shield,
+    color: 'text-green-400',
+    bg: 'bg-green-900/30',
+    title: 'Policy Engine',
+    desc: 'Enforce content, rate-limit, and deployment policies with configurable rules. Auto-block or notify on violations.',
   },
   {
     icon: Zap,
@@ -193,13 +211,13 @@ const FEATURES = [
 const HOW_IT_WORKS = [
   {
     n: '01',
-    title: 'Instrument your agent',
-    desc: 'Add the SDK (TypeScript or Python) and wrap your agent calls. Zero breaking changes to your existing code.',
+    title: 'One-line instrumentation',
+    desc: 'Wrap your Anthropic or OpenAI client with instrument(). Sessions, turns, tool calls, latency, and token counts all flow in automatically.',
   },
   {
     n: '02',
     title: 'Observe in the dashboard',
-    desc: 'Sessions, drift reports, eval runs, and version history appear in real time. No config required.',
+    desc: 'Multi-turn sessions, tool execution traces, drift reports, and eval runs appear in real time. No config required.',
   },
   {
     n: '03',
@@ -209,16 +227,16 @@ const HOW_IT_WORKS = [
 ];
 
 const STATS = [
+  { value: '1 line', label: 'To instrument an agent' },
   { value: 'TypeScript + Python', label: 'Official SDKs' },
-  { value: '4', label: 'Built-in eval templates' },
-  { value: '< 5 min', label: 'Time to first session' },
+  { value: 'Sync + Async', label: 'Client support' },
   { value: 'GitHub Actions', label: 'Native CI/CD' },
 ];
 
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function LandingPage() {
-  const [tab, setTab] = useState<'ts' | 'py' | 'ci'>('ts');
+  const [tab, setTab] = useState<'ts' | 'py' | 'multi' | 'ci'>('ts');
 
   // Authenticated users go straight to the dashboard
   if (getUser()) return <Navigate to="/dashboard" replace />;
@@ -262,15 +280,15 @@ export function LandingPage() {
           </div>
 
           <h1 className="text-4xl md:text-6xl font-bold text-white leading-tight tracking-tight mb-6">
-            The AgentOps platform<br />
+            Full observability for<br />
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 to-blue-400">
-              built for AI teams
+              AI agents in production
             </span>
           </h1>
 
           <p className="text-lg text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-            Session replay, drift detection, eval benchmarking, prompt versioning,
-            and policy enforcement — unified in one platform with TypeScript and Python SDKs.
+            One-line instrumentation captures every session, tool call, multi-turn loop, and token.
+            Built-in drift detection, eval gating, and prompt versioning — no boilerplate.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
@@ -329,7 +347,7 @@ export function LandingPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
             {FEATURES.map((f) => (
               <div key={f.title} className="card group hover:border-gray-700 transition-colors">
                 <div className={`w-9 h-9 rounded-lg ${f.bg} flex items-center justify-center mb-4`}>
@@ -351,13 +369,18 @@ export function LandingPage() {
               Integrate in minutes
             </h2>
             <p className="text-gray-400 max-w-xl mx-auto">
-              Native SDKs for TypeScript and Python. No framework lock-in.
+              Wrap your client once. Sessions, tool calls, multi-turn loops, and evals flow in automatically.
             </p>
           </div>
 
           {/* Tab switcher */}
-          <div className="flex gap-1 bg-gray-800/60 p-1 rounded-lg w-fit mx-auto mb-6 border border-gray-700">
-            {([['ts', 'TypeScript'], ['py', 'Python'], ['ci', 'GitHub Actions']] as const).map(([key, label]) => (
+          <div className="flex gap-1 bg-gray-800/60 p-1 rounded-lg w-fit mx-auto mb-6 border border-gray-700 flex-wrap justify-center">
+            {([
+              ['ts',    'TypeScript'],
+              ['py',    'Python'],
+              ['multi', 'Multi-Turn'],
+              ['ci',    'CI/CD Gate'],
+            ] as const).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setTab(key)}
@@ -376,15 +399,44 @@ export function LandingPage() {
             <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-800">
               <Terminal className="w-4 h-4 text-gray-500" />
               <span className="text-xs text-gray-500 font-mono">
-                {tab === 'ts' ? 'instrument.ts' : tab === 'py' ? 'instrument.py' : 'deploy.yml'}
+                {tab === 'ts' ? 'instrument.ts' : tab === 'py' ? 'instrument.py' : tab === 'multi' ? 'agent_loop.py' : 'deploy.yml'}
               </span>
             </div>
             <pre className="p-5 text-xs leading-relaxed overflow-x-auto">
-              {tab === 'ts' && <TS>{TS_SNIPPET}</TS>}
-              {tab === 'py' && <PY>{PY_SNIPPET}</PY>}
-              {tab === 'ci' && <PY>{CI_SNIPPET}</PY>}
+              {tab === 'ts'    && <TS>{TS_SNIPPET}</TS>}
+              {tab === 'py'    && <PY>{PY_SNIPPET}</PY>}
+              {tab === 'multi' && <PY>{MULTITURN_SNIPPET}</PY>}
+              {tab === 'ci'    && <PY>{CI_SNIPPET}</PY>}
             </pre>
           </div>
+
+          {/* What gets captured callout */}
+          {(tab === 'ts' || tab === 'py') && (
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                'Sessions & turns',
+                'Tool calls & results',
+                'Token counts',
+                'Latency per turn',
+              ].map((item) => (
+                <div key={item} className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-lg px-3 py-2.5">
+                  <Check className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                  <span className="text-xs text-gray-400">{item}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {tab === 'multi' && (
+            <div className="mt-4 p-4 bg-indigo-950/30 border border-indigo-800/30 rounded-lg">
+              <p className="text-xs text-indigo-300 leading-relaxed">
+                <span className="font-semibold text-indigo-200">Multi-turn stitching</span> — without{' '}
+                <code className="bg-indigo-900/40 px-1 rounded">prov.session()</code>, each{' '}
+                <code className="bg-indigo-900/40 px-1 rounded">messages.create</code> creates its own session.
+                Wrap your agent loop in a session context to see the full execution in one place.
+              </p>
+            </div>
+          )}
 
           {/* Install commands */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
@@ -409,7 +461,7 @@ export function LandingPage() {
               Ship with confidence
             </h2>
             <p className="text-gray-400 max-w-xl mx-auto">
-              Three steps from your first session to a fully gated deployment pipeline.
+              Three steps from first session to a fully gated deployment pipeline.
             </p>
           </div>
 
@@ -434,12 +486,14 @@ export function LandingPage() {
           {/* Checklist */}
           <div className="mt-14 grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
-              'Full session replay with token-level detail',
+              'One-line instrumentation — no boilerplate',
+              'Multi-turn session stitching for agent loops',
+              'Automatic tool call & tool result capture',
+              'Sync, async, and streaming clients supported',
               'Automatic prompt drift alerts',
-              'Custom and built-in eval scoring functions',
               'Role-based access control for teams',
+              'Custom and AI-generated eval test cases',
               'Immutable audit log for compliance',
-              'Analytics dashboards out of the box',
             ].map((item) => (
               <div key={item} className="flex items-center gap-3">
                 <div className="w-5 h-5 rounded-full bg-green-900/40 border border-green-800/50 flex items-center justify-center flex-shrink-0">
@@ -495,7 +549,7 @@ export function LandingPage() {
           </div>
           <nav className="flex items-center gap-6">
             <a href="http://localhost:3001" target="_blank" rel="noreferrer" className="hover:text-gray-300 transition-colors">Docs</a>
-            <a href="https://github.com" target="_blank" rel="noreferrer" className="hover:text-gray-300 transition-colors">GitHub</a>
+            <a href="https://github.com/dolobanko/provenant" target="_blank" rel="noreferrer" className="hover:text-gray-300 transition-colors">GitHub</a>
             <Link to="/login" className="hover:text-gray-300 transition-colors">Sign in</Link>
             <Link to="/register" className="hover:text-gray-300 transition-colors">Register</Link>
           </nav>

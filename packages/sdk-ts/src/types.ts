@@ -105,3 +105,16 @@ export interface WaitForCompletionOptions {
   pollIntervalMs?: number;
   timeoutMs?: number;
 }
+
+/**
+ * Options for `ProvenantClient.withSession()` — all fields are forwarded to
+ * `sessions.create()` so they appear on every session in the dashboard.
+ */
+export interface WithSessionOptions {
+  agentVersionId?: string;
+  environmentId?: string;
+  externalId?: string;
+  userId?: string;
+  metadata?: Record<string, unknown>;
+  tags?: string[];
+}
