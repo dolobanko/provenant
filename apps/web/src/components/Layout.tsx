@@ -10,13 +10,12 @@ import clsx from 'clsx';
 
 const mainNav = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Overview' },
-  { to: '/conversations', icon: MessageSquare, label: 'Conversations' },
+  { to: '/conversations', icon: MessageSquare, label: 'Activity Feed' },
   { to: '/agents', icon: Bot, label: 'Agents' },
   { to: '/reports', icon: BarChart2, label: 'Reports' },
-  { to: '/promotions', icon: ArrowUpDown, label: 'Deployments' },
+  { to: '/promotions', icon: ArrowUpDown, label: 'Approvals' },
   { to: '/policies', icon: Shield, label: 'Policies' },
   { to: '/audit', icon: ClipboardList, label: 'Audit Log' },
-  { to: '/agent-traces', icon: Cpu, label: 'AI Provenance' },
 ];
 
 const settingsNav = [
@@ -26,6 +25,7 @@ const settingsNav = [
   { to: '/integrations', icon: GitBranch, label: 'Integrations' },
   { to: '/environments', icon: Globe, label: 'Environments' },
   { to: '/configs', icon: Settings, label: 'Configs' },
+  { to: '/agent-traces', icon: Cpu, label: 'AI Provenance' },
 ];
 
 export function Layout() {

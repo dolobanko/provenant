@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, getErrorMessage } from '../lib/api';
-import { PageHeader } from '../components/PageHeader';
 import { Modal } from '../components/Modal';
 import { StatusBadge } from '../components/StatusBadge';
 import { Skeleton } from '../components/Skeleton';
@@ -335,6 +334,38 @@ export function AgentDetailPage() {
     enabled: !!id,
   });
 
+  // Health score
+  interface DriftItem { id: string; severity: string; resolvedAt: string | null; }
+  interface ViolationItem { id: string; severity: string; resolvedAt: string | null; }
+  const { data: agentDrift = [] } = useQuery<DriftItem[]>({
+    queryKey: ['agent-drift', id],
+    queryFn: () => api.get('/drift/reports', { params: { agentId: id } }).then((r) => r.data),
+    enabled: !!id,
+  });
+  const { data: agentViolations = [] } = useQuery<ViolationItem[]>({
+    queryKey: ['agent-violations', id],
+    queryFn: () => api.get('/policies/violations', { params: { agentId: id } }).then((r) => r.data),
+    enabled: !!id,
+  });
+  const healthScore = (() => {
+    let score = 100;
+    for (const d of agentDrift.filter((d) => !d.resolvedAt)) {
+      if (d.severity === 'CRITICAL' || d.severity === 'HIGH') score -= 30;
+      else if (d.severity === 'MEDIUM') score -= 15;
+      else score -= 5;
+    }
+    for (const v of agentViolations.filter((v) => !v.resolvedAt)) {
+      if (v.severity === 'HIGH' || v.severity === 'CRITICAL') score -= 20;
+      else if (v.severity === 'MEDIUM') score -= 10;
+      else score -= 5;
+    }
+    return Math.max(0, score);
+  })();
+  const healthColor = healthScore >= 80 ? 'text-green-400 bg-green-900/30 border-green-800/40'
+    : healthScore >= 50 ? 'text-yellow-400 bg-yellow-900/30 border-yellow-800/40'
+    : 'text-red-400 bg-red-900/30 border-red-800/40';
+  const healthDot = healthScore >= 80 ? 'bg-green-400' : healthScore >= 50 ? 'bg-yellow-400' : 'bg-red-400';
+
   if (isLoading) return <div className="text-gray-500 text-sm">Loading…</div>;
   if (!agent) return <div className="text-red-400 text-sm">Agent not found</div>;
 
@@ -354,11 +385,21 @@ export function AgentDetailPage() {
       <Link to="/agents" className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 mb-6">
         <ArrowLeft className="w-4 h-4" /> Back to Agents
       </Link>
-      <PageHeader
-        title={agent.name}
-        description={agent.description}
-        action={<button onClick={() => setOpen(true)} className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> New Version</button>}
-      />
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-2xl font-bold text-white">{agent.name}</h1>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${healthColor}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${healthDot}`} />
+              {healthScore} / 100
+            </span>
+          </div>
+          {agent.description && <p className="text-sm text-gray-400 mt-1">{agent.description}</p>}
+        </div>
+        <button onClick={() => setOpen(true)} className="btn-primary flex items-center gap-2 flex-shrink-0">
+          <Plus className="w-4 h-4" /> New Version
+        </button>
+      </div>
 
       <div className="grid grid-cols-3 gap-4 mb-8">
         <div className="card text-center"><p className="text-2xl font-bold text-white">{agent._count.versions}</p><p className="text-sm text-gray-400">Versions</p></div>

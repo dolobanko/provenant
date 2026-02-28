@@ -280,15 +280,14 @@ export function LandingPage() {
           </div>
 
           <h1 className="text-4xl md:text-6xl font-bold text-white leading-tight tracking-tight mb-6">
-            Know what your AI agents<br />
-            <span className="text-brand-400">
-              are doing for your business
-            </span>
+            The manager for your<br />
+            <span className="text-brand-400">AI agents.</span>
           </h1>
 
           <p className="text-lg text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-            Provenant gives product and operations teams complete visibility into their AI agents —
-            in plain English, not logs.
+            Companies replacing people with AI agents need someone watching over them.
+            Provenant tracks every decision, flags every problem, and gives you a full audit trail —
+            so you stay in control.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-10">
@@ -310,19 +309,19 @@ export function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-16 text-left">
             {[
               {
-                emoji: '💬',
-                title: 'Every Conversation Captured',
-                desc: 'See what your agents say to customers, searchable and readable',
+                emoji: '🔍',
+                title: 'Know what they\'re doing',
+                desc: 'Every conversation your agents have is logged and searchable. No black boxes.',
               },
               {
-                emoji: '📊',
-                title: 'Business Metrics, Not Traces',
-                desc: 'Cost per agent, quality scores, response times — in terms your whole team understands',
+                emoji: '🚨',
+                title: 'Catch them when they go wrong',
+                desc: 'Automated quality checks and alerts when agent behavior changes.',
               },
               {
-                emoji: '🚀',
-                title: 'Safe Deployments',
-                desc: 'Promote agent updates through environments with approval workflows',
+                emoji: '📋',
+                title: 'Prove you\'re in control',
+                desc: 'Full audit trail for regulators, boards, and customers who ask.',
               },
             ].map((vp) => (
               <div key={vp.title} className="bg-gray-900/60 border border-gray-800 rounded-xl p-5">
