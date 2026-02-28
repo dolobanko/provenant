@@ -73,16 +73,31 @@ function parseContent(raw: unknown): { textParts: string[]; blocks: ContentBlock
   return { textParts: [String(raw)], blocks: [] };
 }
 
-function CollapsibleBlock({ label, children }: { label: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+function CollapsibleBlock({
+  label,
+  preview,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  preview?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="mt-2 border border-gray-700 rounded-lg overflow-hidden">
+    <div className="border border-gray-700 rounded-lg overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 w-full px-3 py-2 bg-gray-800/60 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+        className="flex items-start gap-2 w-full px-3 py-2.5 bg-gray-800/60 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors text-left"
       >
-        <ChevronDown className={clsx('w-3 h-3 transition-transform', open && 'rotate-180')} />
-        {label}
+        <ChevronDown className={clsx('w-3 h-3 transition-transform flex-shrink-0 mt-0.5', open && 'rotate-180')} />
+        <span className="flex-1 min-w-0">
+          <span className="font-medium text-gray-300">{label}</span>
+          {!open && preview && (
+            <span className="ml-2 text-gray-500 truncate block">{preview}</span>
+          )}
+        </span>
       </button>
       {open && <div className="p-3 bg-gray-950">{children}</div>}
     </div>
@@ -103,32 +118,47 @@ function TurnBubble({ turn }: { turn: Turn }) {
 
   // SYSTEM — centered, muted, collapsible
   if (turn.role === 'SYSTEM') {
+    const sysText = textParts.join('\n') || (typeof turn.content === 'string' ? turn.content : JSON.stringify(turn.content, null, 2));
+    const sysPreview = sysText.slice(0, 80).replace(/\n/g, ' ') + (sysText.length > 80 ? '…' : '');
     return (
-      <div className="flex justify-center">
-        <CollapsibleBlock label="System prompt">
-          <p className="text-xs text-gray-400 font-mono whitespace-pre-wrap leading-relaxed">
-            {textParts.join('\n') || JSON.stringify(turn.content, null, 2)}
-          </p>
-        </CollapsibleBlock>
+      <div className="flex justify-center my-2">
+        <div className="w-full max-w-2xl">
+          <CollapsibleBlock label="System prompt" preview={sysPreview}>
+            <p className="text-xs text-gray-400 font-mono whitespace-pre-wrap leading-relaxed">
+              {sysText}
+            </p>
+          </CollapsibleBlock>
+        </div>
       </div>
     );
   }
 
   // TOOL — left-aligned, monospace, dark green, collapsible
   if (turn.role === 'TOOL') {
+    const rawText = typeof turn.content === 'string'
+      ? turn.content
+      : JSON.stringify(turn.content, null, 2);
+    // Extract a readable preview: first non-empty line, strip JSON chars
+    const firstLine = rawText.split('\n').find((l) => l.trim() && l.trim() !== '{' && l.trim() !== '}' && l.trim() !== '[]') ?? '';
+    const toolPreview = firstLine.replace(/[{}"[\]]/g, '').trim().slice(0, 80) || rawText.slice(0, 80);
+
     return (
       <div className="flex items-start gap-2 max-w-2xl">
         <div className="w-6 h-6 rounded-full bg-green-900/40 border border-green-800/50 flex items-center justify-center flex-shrink-0 mt-1">
           <span className="text-green-400 text-xs">⚙</span>
         </div>
         <div className="flex-1 min-w-0">
-          <CollapsibleBlock label="Tool result">
-            <pre className="text-xs text-green-300 font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
-              {typeof turn.content === 'string' ? turn.content : JSON.stringify(turn.content, null, 2)}
+          <CollapsibleBlock label="Tool result" preview={toolPreview} defaultOpen>
+            <pre className="text-xs text-green-300 font-mono whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+              {rawText}
             </pre>
           </CollapsibleBlock>
           <div className="flex items-center gap-2 mt-1 text-xs text-gray-600">
-            {turn.latencyMs != null && <span>{turn.latencyMs < 1000 ? `${turn.latencyMs}ms` : `${(turn.latencyMs / 1000).toFixed(1)}s`}</span>}
+            {turn.latencyMs != null && (
+              <span>{turn.latencyMs < 1000 ? `${turn.latencyMs}ms` : `${(turn.latencyMs / 1000).toFixed(1)}s`}</span>
+            )}
+            {turn.inputTokens != null && <span>{turn.inputTokens}↑</span>}
+            {turn.outputTokens != null && <span>{turn.outputTokens}↓</span>}
           </div>
         </div>
       </div>
