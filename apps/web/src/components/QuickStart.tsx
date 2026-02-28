@@ -170,19 +170,12 @@ const response = await client.messages.create({
           </p>
 
           <div className="space-y-2">
-            <p className="text-gray-400 font-medium">1 · Install</p>
+            <p className="text-gray-400 font-medium">1 · Run the installer</p>
             <pre className="font-mono text-gray-300 bg-gray-900 rounded p-2.5 overflow-x-auto">
-{`npm install -g @provenant/hooks-claude`}
-            </pre>
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-gray-400 font-medium">2 · Run the installer</p>
-            <pre className="font-mono text-gray-300 bg-gray-900 rounded p-2.5 overflow-x-auto">
-{`provenant-claude-install`}
+{`node packages/hooks-claude/install.js`}
             </pre>
             <p className="text-gray-500 leading-relaxed">
-              Enter your API key, then paste this Agent ID when prompted:
+              Run this from your Provenant repo root. Enter your API key, then paste this Agent ID when prompted:
             </p>
             <pre className="font-mono text-brand-400 bg-gray-900 rounded p-2.5 overflow-x-auto">
 {agentId}
@@ -190,7 +183,7 @@ const response = await client.messages.create({
           </div>
 
           <div className="space-y-1">
-            <p className="text-gray-400 font-medium">3 · Use Claude Code normally</p>
+            <p className="text-gray-400 font-medium">2 · Use Claude Code normally</p>
             <p className="text-gray-500 leading-relaxed">
               Sessions appear here automatically every time you run Claude Code.
               Each tool call is recorded as a turn.
