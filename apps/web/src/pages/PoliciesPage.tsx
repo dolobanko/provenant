@@ -5,7 +5,7 @@ import { PageHeader } from '../components/PageHeader';
 import { Modal } from '../components/Modal';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
-import { Shield, Plus, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Shield, Plus, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface Policy { id: string; name: string; description: string; type: string; isEnabled: boolean; enforcementLevel: string; _count: { violations: number }; }

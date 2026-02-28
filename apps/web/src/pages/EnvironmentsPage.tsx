@@ -51,7 +51,7 @@ export function EnvironmentsPage() {
                   <Globe className="w-5 h-5" />
                 </div>
                 <div className="flex items-center gap-2">
-                  {env.requiresApproval && <Lock className="w-3.5 h-3.5 text-yellow-400" title="Requires approval" />}
+                  {env.requiresApproval && <Lock className="w-3.5 h-3.5 text-yellow-400" aria-label="Requires approval" />}
                   <StatusBadge status={env.type} />
                 </div>
               </div>

@@ -6,7 +6,8 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { auditLog } from '../middleware/audit';
 import { fireWebhook } from '../lib/webhooks';
 
-export const webhooksRouter = Router();
+import type { IRouter } from 'express';
+export const webhooksRouter: IRouter = Router();
 webhooksRouter.use(authenticate);
 
 const VALID_EVENTS = [

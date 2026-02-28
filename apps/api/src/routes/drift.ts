@@ -87,7 +87,8 @@ driftRouter.post('/reports/:id/resolve', auditLog('drift.resolve', 'DriftReport'
   } catch (err) { next(err); }
 });
 
-// Baselines
+// ─── Baselines ─────────────────────────────────────────────────────────────
+
 const baselineSchema = z.object({
   agentId: z.string(),
   agentVersionId: z.string().optional(),
@@ -125,40 +126,119 @@ driftRouter.post('/baselines', auditLog('drift.baseline.create', 'DriftBaseline'
   } catch (err) { next(err); }
 });
 
-// Compute drift from two eval runs
-driftRouter.post('/compute', async (req: AuthRequest, res, next) => {
+// ─── Compute drift from two eval runs ──────────────────────────────────────
+
+driftRouter.post('/compute', auditLog('drift.compute', 'DriftReport'), async (req: AuthRequest, res, next) => {
   try {
-    const { baselineRunId, currentRunId } = z.object({
+    const body = z.object({
       baselineRunId: z.string(),
       currentRunId: z.string(),
+      agentId: z.string().optional(),
+      agentVersionId: z.string().optional(),
+      environmentId: z.string().optional(),
     }).parse(req.body);
 
-    const [baseline, current] = await Promise.all([
+    const { baselineRunId, currentRunId } = body;
+
+    const [baselineRun, currentRun] = await Promise.all([
       prisma.evalRun.findUnique({ where: { id: baselineRunId }, include: { results: true } }),
       prisma.evalRun.findUnique({ where: { id: currentRunId }, include: { results: true } }),
     ]);
-    if (!baseline || !current) { res.status(404).json({ error: 'Run not found' }); return; }
 
-    const scoreDelta = Math.abs((current.score ?? 0) - (baseline.score ?? 0));
-    const passRateDelta = Math.abs((current.passRate ?? 0) - (baseline.passRate ?? 0));
-    const driftScore = (scoreDelta + passRateDelta * 100) / 2;
+    if (!baselineRun || !currentRun) {
+      res.status(404).json({ error: 'Eval run not found' });
+      return;
+    }
 
-    const severity =
-      driftScore > 40 ? 'CRITICAL' :
-      driftScore > 25 ? 'HIGH' :
-      driftScore > 10 ? 'MEDIUM' : 'LOW';
-
-    res.json({
-      driftScore,
-      severity,
-      dimensions: {
-        scoreDelta,
-        passRateDelta,
-        baselineScore: baseline.score,
-        currentScore: current.score,
-        baselinePassRate: baseline.passRate,
-        currentPassRate: current.passRate,
-      },
+    // Verify the agent belongs to the requesting org
+    const agentId = body.agentId ?? currentRun.agentId;
+    const agent = await prisma.agent.findFirst({
+      where: { id: agentId, orgId: req.user!.orgId },
     });
+    if (!agent) {
+      res.status(404).json({ error: 'Agent not found or access denied' });
+      return;
+    }
+
+    const baselinePassRate = baselineRun.passRate ?? 0;
+    const currentPassRate = currentRun.passRate ?? 0;
+    const baselineScore = baselineRun.score ?? 0;
+    const currentScore = currentRun.score ?? 0;
+
+    // Drift score = percentage deviation of passRate from baseline (0–100 scale)
+    // 0 drift = identical passRate, 100 = complete inversion
+    const passRateDelta = baselinePassRate - currentPassRate; // positive = degradation
+    const scoreDelta = baselineScore - currentScore;
+
+    // Weight passRate deviation heavily (it's the primary signal)
+    const driftScore = Math.min(100, Math.round(Math.abs(passRateDelta) * 100));
+
+    // Severity thresholds as specified:
+    // LOW < 10, MEDIUM < 25, HIGH < 50, CRITICAL >= 50
+    const severity =
+      driftScore >= 50 ? 'CRITICAL' :
+      driftScore >= 25 ? 'HIGH' :
+      driftScore >= 10 ? 'MEDIUM' : 'LOW';
+
+    const dimensions = {
+      passRateDelta: Math.round(passRateDelta * 1000) / 1000,
+      scoreDelta: Math.round(scoreDelta * 10) / 10,
+      baselinePassRate: Math.round(baselinePassRate * 1000) / 1000,
+      currentPassRate: Math.round(currentPassRate * 1000) / 1000,
+      baselineScore: Math.round(baselineScore * 10) / 10,
+      currentScore: Math.round(currentScore * 10) / 10,
+      baselineCaseCount: baselineRun.results.length,
+      currentCaseCount: currentRun.results.length,
+    };
+
+    // Save DriftReport
+    const report = await prisma.driftReport.create({
+      data: {
+        agentId,
+        agentVersionId: body.agentVersionId ?? currentRun.agentVersionId ?? undefined,
+        environmentId: body.environmentId ?? currentRun.environmentId ?? undefined,
+        baselineRunId,
+        currentRunId,
+        driftScore,
+        severity,
+        dimensions: JSON.stringify(dimensions),
+      },
+      include: { agent: true, agentVersion: true, environment: true },
+    });
+
+    // Save / update DriftBaseline with current run's metrics if there isn't one yet
+    const existingBaseline = await prisma.driftBaseline.findFirst({
+      where: { agentId, isActive: true },
+    });
+
+    if (!existingBaseline) {
+      await prisma.driftBaseline.create({
+        data: {
+          agentId,
+          agentVersionId: body.agentVersionId ?? baselineRun.agentVersionId ?? undefined,
+          environmentId: body.environmentId ?? baselineRun.environmentId ?? undefined,
+          metrics: JSON.stringify({
+            passRate: baselinePassRate,
+            score: baselineScore,
+            caseCount: baselineRun.results.length,
+            runId: baselineRunId,
+          }),
+        },
+      });
+    }
+
+    // Fire webhook for HIGH or CRITICAL severity
+    if (['HIGH', 'CRITICAL'].includes(severity)) {
+      fireWebhook(req.user!.orgId, 'drift.detected', {
+        reportId: report.id,
+        agentId,
+        agentVersionId: report.agentVersionId,
+        severity,
+        driftScore,
+        dimensions,
+      }).catch(() => {});
+    }
+
+    res.status(201).json(report);
   } catch (err) { next(err); }
 });

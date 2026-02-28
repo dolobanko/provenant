@@ -1,12 +1,26 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
+import { sendEmail, passwordResetEmail } from '../lib/email';
 import axios from 'axios';
 
 import type { IRouter } from 'express';
 export const authRouter: IRouter = Router();
+
+// In-process store for password-reset tokens.
+// In production, persist these in the database or Redis.
+const resetTokens = new Map<string, { userId: string; expiresAt: Date }>();
+
+// Prune expired tokens every 10 minutes
+setInterval(() => {
+  const now = new Date();
+  for (const [tok, rec] of resetTokens.entries()) {
+    if (rec.expiresAt < now) resetTokens.delete(tok);
+  }
+}, 10 * 60 * 1000);
 
 const registerSchema = z.object({
   name: z.string().min(1),
@@ -130,6 +144,62 @@ authRouter.post('/accept-invitation', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Password Reset ────────────────────────────────────────────────────────────
+
+authRouter.post('/forgot-password', async (req, res, next) => {
+  try {
+    const { email } = z.object({ email: z.string().email() }).parse(req.body);
+
+    // Always return the same message to avoid user enumeration
+    const genericResponse = { message: "If that email is registered, you'll receive a reset link shortly." };
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      res.json(genericResponse);
+      return;
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    resetTokens.set(token, { userId: user.id, expiresAt });
+
+    const frontendUrl = process.env.CORS_ORIGIN ?? 'http://localhost:5173';
+    const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
+
+    sendEmail({
+      to: email,
+      ...passwordResetEmail({ resetUrl }),
+    }).catch(() => {});
+
+    res.json(genericResponse);
+  } catch (err) { next(err); }
+});
+
+authRouter.post('/reset-password', async (req, res, next) => {
+  try {
+    const body = z.object({
+      token: z.string(),
+      password: z.string().min(8),
+    }).parse(req.body);
+
+    const record = resetTokens.get(body.token);
+    if (!record || record.expiresAt < new Date()) {
+      res.status(400).json({ error: 'Invalid or expired reset token. Please request a new one.' });
+      return;
+    }
+
+    const hash = await bcrypt.hash(body.password, 12);
+    await prisma.user.update({
+      where: { id: record.userId },
+      data: { passwordHash: hash },
+    });
+
+    resetTokens.delete(body.token);
+
+    res.json({ message: 'Password updated successfully. You can now sign in.' });
+  } catch (err) { next(err); }
+});
+
 // ── GitHub OAuth ─────────────────────────────────────────────────────────────
 
 authRouter.get('/github', (_req, res) => {
@@ -174,7 +244,6 @@ authRouter.get('/github/callback', async (req, res, next) => {
     let user = await prisma.user.findUnique({ where: { githubId }, select: { id: true, name: true, email: true, role: true, orgId: true } });
 
     if (!user) {
-      // Check if an account with this email already exists → link GitHub to it
       const byEmail = await prisma.user.findUnique({ where: { email: primaryEmail } });
       if (byEmail) {
         user = await prisma.user.update({
@@ -183,7 +252,6 @@ authRouter.get('/github/callback', async (req, res, next) => {
           select: { id: true, name: true, email: true, role: true, orgId: true },
         });
       } else {
-        // Brand-new user — create user + org in a transaction
         const login: string = profileRes.data.login;
         const orgSlug = `${login.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
         user = await prisma.$transaction(async (tx) => {

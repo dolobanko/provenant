@@ -6,12 +6,15 @@ import { PageHeader } from '../components/PageHeader';
 import { Modal } from '../components/Modal';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
+import { CardGridSkeleton } from '../components/Skeleton';
+import { useToast } from '../components/Toast';
 import { Bot, Plus } from 'lucide-react';
 
 interface Agent { id: string; name: string; slug: string; description: string; tags: string[]; status: string; modelFamily: string; _count: { versions: number }; updatedAt: string; }
 
 export function AgentsPage() {
   const qc = useQueryClient();
+  const { success, error: toastError } = useToast();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: '', slug: '', description: '', modelFamily: '', tags: '' });
   const [error, setError] = useState('');
@@ -23,8 +26,17 @@ export function AgentsPage() {
 
   const create = useMutation({
     mutationFn: (body: object) => api.post('/agents', body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['agents'] }); setOpen(false); setForm({ name: '', slug: '', description: '', modelFamily: '', tags: '' }); },
-    onError: (err) => setError(getErrorMessage(err)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['agents'] });
+      setOpen(false);
+      setForm({ name: '', slug: '', description: '', modelFamily: '', tags: '' });
+      success('Agent created successfully');
+    },
+    onError: (err) => {
+      const msg = getErrorMessage(err);
+      setError(msg);
+      toastError(msg);
+    },
   });
 
   function handleName(name: string) {
@@ -42,13 +54,18 @@ export function AgentsPage() {
       <PageHeader
         title="Agents"
         description="Manage your AI agents and their versions"
-        action={<button onClick={() => setOpen(true)} className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> New Agent</button>}
+        action={<button onClick={() => { setOpen(true); setError(''); }} className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> New Agent</button>}
       />
 
       {isLoading ? (
-        <div className="text-gray-500 text-sm">Loading…</div>
+        <CardGridSkeleton count={6} />
       ) : agents.length === 0 ? (
-        <EmptyState icon={Bot} title="No agents yet" description="Create your first agent to get started." action={<button onClick={() => setOpen(true)} className="btn-primary">Create Agent</button>} />
+        <EmptyState
+          icon={Bot}
+          title="No agents yet"
+          description="Create your first agent to start tracking AI behaviour, running evals, and capturing sessions."
+          action={<button onClick={() => setOpen(true)} className="btn-primary">Create your first agent</button>}
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {agents.map((agent) => (

@@ -7,6 +7,7 @@ import { EVAL_TEMPLATES } from '../lib/eval-templates';
 import { estimateCost } from '../lib/pricing';
 import { fireWebhook } from '../lib/webhooks';
 import { callAnthropic } from '../lib/llm';
+import { logger } from '../lib/logger';
 
 import type { IRouter } from 'express';
 export const evalsRouter: IRouter = Router();
@@ -180,6 +181,228 @@ evalsRouter.delete('/suites/:suiteId/cases/:id', auditLog('eval.case.delete', 'E
   } catch (err) { next(err); }
 });
 
+// ─── Eval Execution ───────────────────────────────────────────────────────────
+
+interface EvalCaseRow {
+  id: string;
+  input: unknown;
+  expectedOutput: unknown;
+  scoringFn: string;
+  weight: number;
+}
+
+interface CaseResult {
+  runId: string;
+  caseId: string;
+  passed: boolean;
+  score: number;
+  latencyMs: number;
+  tokenCount: number;
+  actualOutput: string | null;
+  error: string | null;
+  metadata: string;
+}
+
+async function scoreCase(
+  systemPrompt: string,
+  c: EvalCaseRow,
+  runId: string,
+): Promise<CaseResult> {
+  const input = (typeof c.input === 'string' ? JSON.parse(c.input) : c.input) as Record<string, unknown>;
+  const expected = c.expectedOutput
+    ? ((typeof c.expectedOutput === 'string' ? JSON.parse(c.expectedOutput as string) : c.expectedOutput) as Record<string, unknown>)
+    : {};
+
+  const userMessage: string =
+    typeof input.message === 'string'
+      ? input.message
+      : typeof input.prompt === 'string'
+        ? input.prompt
+        : JSON.stringify(input);
+
+  const startMs = Date.now();
+
+  let actualText = '';
+  let errorMsg: string | null = null;
+
+  try {
+    actualText = await callAnthropic(systemPrompt, userMessage);
+  } catch (err) {
+    errorMsg = String(err);
+    return {
+      runId,
+      caseId: c.id,
+      passed: false,
+      score: 0,
+      latencyMs: Date.now() - startMs,
+      tokenCount: 0,
+      actualOutput: null,
+      error: errorMsg,
+      metadata: JSON.stringify({}),
+    };
+  }
+
+  const latencyMs = Date.now() - startMs;
+
+  let score = 0;
+  let passed = false;
+
+  switch (c.scoringFn) {
+    case 'exact_match': {
+      const expectedText = String(expected.text ?? expected.output ?? JSON.stringify(expected));
+      passed = actualText.trim().toLowerCase() === expectedText.trim().toLowerCase();
+      score = passed ? 100 : 0;
+      break;
+    }
+
+    case 'contains_keywords': {
+      const keywords = (expected.contains ?? expected.keywords ?? []) as string[];
+      if (keywords.length === 0) {
+        // No keywords to check — auto-pass
+        passed = true;
+        score = 100;
+      } else {
+        const hits = keywords.filter((kw) =>
+          actualText.toLowerCase().includes(kw.toLowerCase()),
+        );
+        score = (hits.length / keywords.length) * 100;
+        passed = score >= 80;
+      }
+      break;
+    }
+
+    case 'llm_judge': {
+      try {
+        const judgeSystem =
+          'You are a precise eval judge. Evaluate whether the actual output satisfies the expected criteria. Respond ONLY with a JSON object, no markdown.';
+        const judgeUser = `Expected criteria: ${JSON.stringify(expected)}\nActual output: ${actualText}\n\nRespond with: {"score": 0-100, "passed": true/false, "reason": "brief explanation"}`;
+        const judgeRaw = await callAnthropic(judgeSystem, judgeUser);
+        const cleaned = judgeRaw.replace(/```json\s*|\s*```/g, '').trim();
+        const judged = JSON.parse(cleaned) as { score: number; passed: boolean };
+        score = judged.score ?? 50;
+        passed = judged.passed ?? score >= 70;
+      } catch {
+        // Fallback: check if any expected values appear
+        score = 50;
+        passed = false;
+      }
+      break;
+    }
+
+    default: {
+      // Unknown scorer — simple contains check
+      const expectedStr = JSON.stringify(expected).toLowerCase();
+      passed = actualText.toLowerCase().includes(expectedStr.slice(1, -1));
+      score = passed ? 80 : 20;
+    }
+  }
+
+  return {
+    runId,
+    caseId: c.id,
+    passed,
+    score: Math.round(score * 10) / 10,
+    latencyMs,
+    tokenCount: Math.ceil(userMessage.length / 4) + Math.ceil(actualText.length / 4),
+    actualOutput: JSON.stringify({ text: actualText }),
+    error: null,
+    metadata: JSON.stringify({}),
+  };
+}
+
+async function executeRun(runId: string, orgId: string): Promise<void> {
+  try {
+    await prisma.evalRun.update({
+      where: { id: runId },
+      data: { status: 'RUNNING', startedAt: new Date() },
+    });
+
+    const run = await prisma.evalRun.findUnique({
+      where: { id: runId },
+      include: {
+        suite: { include: { cases: true } },
+        agentVersion: true,
+      },
+    });
+
+    if (!run) return;
+
+    const cases = run.suite.cases as EvalCaseRow[];
+
+    if (cases.length === 0) {
+      await prisma.evalRun.update({
+        where: { id: runId },
+        data: { status: 'COMPLETED', completedAt: new Date(), passRate: 0, score: 0 },
+      });
+      return;
+    }
+
+    const systemPrompt =
+      (run.agentVersion as { systemPrompt?: string } | null)?.systemPrompt ??
+      'You are a helpful, accurate AI assistant.';
+
+    const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
+
+    let results: CaseResult[];
+
+    if (!hasAnthropicKey) {
+      // Fallback: simulated results with a clear warning
+      logger.warn('[EvalRun] ANTHROPIC_API_KEY not set — using simulated scores for run ' + runId);
+      results = cases.map((c) => ({
+        runId,
+        caseId: c.id,
+        passed: Math.random() > 0.3,
+        score: Math.round((50 + Math.random() * 50) * 10) / 10,
+        latencyMs: Math.floor(Math.random() * 800) + 100,
+        tokenCount: Math.floor(Math.random() * 300) + 50,
+        actualOutput: JSON.stringify({ text: '(simulated — set ANTHROPIC_API_KEY for real execution)' }),
+        error: null,
+        metadata: JSON.stringify({ simulated: true }),
+      }));
+    } else {
+      // Real execution — run cases sequentially to avoid hammering the API
+      results = [];
+      for (const c of cases) {
+        const result = await scoreCase(systemPrompt, c, runId);
+        results.push(result);
+      }
+    }
+
+    await prisma.evalCaseResult.createMany({ data: results });
+
+    const passRate = results.filter((r) => r.passed).length / results.length;
+    const avgScore = results.reduce((a, r) => a + r.score, 0) / results.length;
+
+    await prisma.evalRun.update({
+      where: { id: runId },
+      data: {
+        status: 'COMPLETED',
+        completedAt: new Date(),
+        passRate,
+        score: Math.round(avgScore * 10) / 10,
+      },
+    });
+
+    if (passRate < 0.8) {
+      fireWebhook(orgId, 'eval.failed', {
+        runId,
+        suiteId: run.suiteId,
+        agentId: run.agentId,
+        passRate: Math.round(passRate * 100) / 100,
+        score: Math.round(avgScore * 10) / 10,
+      }).catch(() => {});
+    }
+
+    logger.info(`[EvalRun] Completed ${runId} — passRate: ${(passRate * 100).toFixed(1)}% score: ${avgScore.toFixed(1)}`);
+  } catch (err) {
+    logger.error('[EvalRun] Execution failed', { runId, err });
+    await prisma.evalRun.update({
+      where: { id: runId },
+      data: { status: 'COMPLETED', completedAt: new Date(), passRate: 0, score: 0 },
+    }).catch(() => {});
+  }
+}
+
 // ─── Runs ─────────────────────────────────────────────────────────────────────
 
 const runSchema = z.object({
@@ -227,8 +450,7 @@ evalsRouter.get('/runs/:id', async (req: AuthRequest, res, next) => {
     });
     if (!run) { res.status(404).json({ error: 'Not found' }); return; }
 
-    // Compute estimated cost from tokenCount across all case results
-    const modelId = run.agentVersion?.modelId ?? '';
+    const modelId = (run.agentVersion as { modelId?: string } | null)?.modelId ?? '';
     const totalTokens = (run.results as { tokenCount: number | null }[])
       .reduce((a, r) => a + (r.tokenCount ?? 0), 0);
     const half = Math.floor(totalTokens / 2);
@@ -253,51 +475,22 @@ evalsRouter.post('/runs', auditLog('eval.run.create', 'EvalRun'), async (req: Au
         metadata: JSON.stringify(body.metadata),
         status: 'QUEUED',
       },
-      include: { suite: { include: { cases: true } } },
     });
 
-    // Simulate async processing (in production this would be a Bull job)
-    setTimeout(async () => {
-      try {
-        await prisma.evalRun.update({ where: { id: run.id }, data: { status: 'RUNNING', startedAt: new Date() } });
-        const cases = run.suite.cases as Array<{ id: string; expectedOutput?: unknown }>;
-        if (cases.length === 0) {
-          await prisma.evalRun.update({ where: { id: run.id }, data: { status: 'COMPLETED', completedAt: new Date(), passRate: 0, score: 0 } });
-          return;
-        }
-        const results = cases.map((c) => ({
-          runId: run.id,
-          caseId: c.id,
-          passed: Math.random() > 0.2,
-          score: Math.random() * 100,
-          latencyMs: Math.floor(Math.random() * 2000) + 100,
-          tokenCount: Math.floor(Math.random() * 500) + 50,
-          actualOutput: JSON.stringify(c.expectedOutput ?? {}),
-          metadata: JSON.stringify({}),
-        }));
-        await prisma.evalCaseResult.createMany({ data: results });
-        const passRate = results.filter((r) => r.passed).length / results.length;
-        const avgScore = results.reduce((a, r) => a + r.score, 0) / results.length;
-        await prisma.evalRun.update({
-          where: { id: run.id },
-          data: { status: 'COMPLETED', completedAt: new Date(), passRate, score: avgScore },
-        });
-        if (passRate < 0.8) {
-          fireWebhook(req.user!.orgId, 'eval.failed', {
-            runId: run.id,
-            suiteId: run.suiteId,
-            agentId: run.agentId,
-            passRate: Math.round(passRate * 100) / 100,
-          }).catch(() => {});
-        }
-      } catch { /* swallow */ }
-    }, 2000);
+    const orgId = req.user!.orgId;
+
+    // Execute immediately in background (no await — fire and forget)
+    setImmediate(() => {
+      executeRun(run.id, orgId).catch((err) =>
+        logger.error('[EvalRun] Unhandled error in background execution', { err }),
+      );
+    });
 
     res.status(201).json(run);
   } catch (err) { next(err); }
 });
 
-// Submit results externally
+// Submit results externally (from SDK / CI)
 evalsRouter.post('/runs/:id/results', auditLog('eval.run.results', 'EvalRun'), async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
@@ -411,7 +604,6 @@ Generate ${count} diverse, production-relevant eval cases as a JSON array.`;
 
     const rawText = await callAnthropic(systemPrompt, userPrompt);
 
-    // Strip possible markdown fences
     const jsonStr = rawText
       .replace(/^```(?:json)?\s*/m, '')
       .replace(/\s*```\s*$/m, '')

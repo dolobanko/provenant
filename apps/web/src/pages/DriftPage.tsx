@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, getErrorMessage } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
 import { Modal } from '../components/Modal';
-import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
 import { Activity, Plus, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';

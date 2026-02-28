@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../lib/prisma';
 import { authenticate, AuthRequest, requireRole } from '../middleware/auth';
 import { auditLog } from '../middleware/audit';
+import { sendEmail, invitationEmail } from '../lib/email';
 
 import type { IRouter } from 'express';
 export const orgRouter: IRouter = Router();
@@ -169,7 +170,26 @@ orgRouter.post('/invitations',
         include: { invitedBy: { select: { name: true, email: true } } },
       });
 
-      const inviteLink = `${process.env.APP_URL ?? 'http://localhost:5173'}/accept-invitation?token=${token}`;
+      const frontendUrl = process.env.CORS_ORIGIN ?? 'http://localhost:5173';
+      const inviteLink = `${frontendUrl}/accept-invitation?token=${token}`;
+
+      // Load org name for the email
+      const org = await prisma.org.findUnique({ where: { id: req.user!.orgId } });
+      const inviterName = (invitation.invitedBy as { name: string } | null)?.name ?? 'A team member';
+
+      // Send invitation email (logs to console in dev if SMTP not configured)
+      sendEmail({
+        to: body.email,
+        ...invitationEmail({
+          inviterName,
+          orgName: org?.name ?? 'your team',
+          role: body.role,
+          inviteUrl: inviteLink,
+        }),
+      }).catch(() => {
+        // Non-fatal — invitation is already saved to DB
+      });
+
       res.status(201).json({ ...invitation, inviteLink });
     } catch (err) { next(err); }
   }

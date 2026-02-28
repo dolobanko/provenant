@@ -5,7 +5,6 @@ import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { ArrowLeft, Check, X } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { format } from 'date-fns';
 
 interface RunDetail {
   id: string; status: string; score: number; passRate: number; startedAt: string; completedAt: string; costUsd?: number | null;
