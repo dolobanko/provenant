@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { auditLog } from '../middleware/audit';
 import { fireWebhook } from '../lib/webhooks';
+import { sendSlackAlert, policyViolationPayload } from '../services/notifications';
 
 import type { IRouter } from 'express';
 export const policiesRouter: IRouter = Router();
@@ -115,6 +116,19 @@ policiesRouter.post('/violations', auditLog('policy.violation', 'PolicyViolation
       resourceType: body.resourceType,
       severity: body.severity,
     }).catch(() => {});
+    // Slack alert
+    prisma.org.findUnique({ where: { id: req.user!.orgId }, select: { slackWebhookUrl: true } })
+      .then((org) => {
+        if (org?.slackWebhookUrl) {
+          sendSlackAlert(org.slackWebhookUrl, policyViolationPayload({
+            policyName: policy.name,
+            agentName: body.resourceType,
+            severity: body.severity,
+            description: JSON.stringify(body.details).slice(0, 200),
+            baseUrl: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+          }));
+        }
+      }).catch(() => {});
     res.status(201).json(violation);
   } catch (err) { next(err); }
 });

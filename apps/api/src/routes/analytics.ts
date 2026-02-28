@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { estimateCost } from '../lib/pricing';
 
 import type { IRouter } from 'express';
 export const analyticsRouter: IRouter = Router();
@@ -67,6 +68,48 @@ analyticsRouter.get('/session-volume', async (req: AuthRequest, res, next) => {
     }
 
     const data = Object.entries(byDate).map(([date, count]) => ({ date, count }));
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+analyticsRouter.get('/timeseries', async (req: AuthRequest, res, next) => {
+  try {
+    const orgId = req.user!.orgId;
+    const days = Math.min(Number(req.query.days ?? 30), 90);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const sessions = await prisma.session.findMany({
+      where: { agent: { orgId }, startedAt: { gte: since } },
+      select: {
+        startedAt: true,
+        totalTokens: true,
+        agentVersion: { select: { modelId: true } },
+      },
+      orderBy: { startedAt: 'asc' },
+    });
+
+    const byDate: Record<string, { conversations: number; costUsd: number }> = {};
+    // Pre-fill all days with zeros
+    for (let d = 0; d < days; d++) {
+      const date = new Date(since.getTime() + d * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      byDate[date] = { conversations: 0, costUsd: 0 };
+    }
+
+    for (const s of sessions) {
+      const date = s.startedAt.toISOString().slice(0, 10);
+      if (!byDate[date]) byDate[date] = { conversations: 0, costUsd: 0 };
+      byDate[date].conversations += 1;
+      const modelId = (s.agentVersion as { modelId?: string } | null)?.modelId ?? '';
+      const half = Math.floor((s.totalTokens ?? 0) / 2);
+      byDate[date].costUsd += estimateCost(modelId, half, half);
+    }
+
+    const data = Object.entries(byDate).map(([date, v]) => ({
+      date,
+      conversations: v.conversations,
+      costUsd: Math.round(v.costUsd * 10000) / 10000,
+    }));
+
     res.json(data);
   } catch (err) { next(err); }
 });

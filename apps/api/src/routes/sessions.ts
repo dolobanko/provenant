@@ -91,13 +91,14 @@ sessionsRouter.use(authenticate);
 
 sessionsRouter.get('/', async (req: AuthRequest, res, next) => {
   try {
-    const { agentId, environmentId, status } = req.query as Record<string, string>;
+    const { agentId, environmentId, status, q } = req.query as Record<string, string>;
     const sessions = await prisma.session.findMany({
       where: {
         agent: { orgId: req.user!.orgId },
         ...(agentId && { agentId }),
         ...(environmentId && { environmentId }),
         ...(status && { status }),
+        ...(q?.trim() && { turns: { some: { content: { contains: q.trim() } } } }),
       },
       include: {
         agent: true,

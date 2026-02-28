@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { getUser } from '../lib/auth';
@@ -6,6 +7,10 @@ import { formatDistanceToNow, isToday, startOfMonth } from 'date-fns';
 import { Bot, MessageSquare, TrendingUp, DollarSign, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 import { StatusBadge } from '../components/StatusBadge';
 import { Skeleton } from '../components/Skeleton';
+import { OnboardingChecklist } from '../components/OnboardingChecklist';
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from 'recharts';
 
 interface Agent { id: string; name: string; status: string; }
 interface Session {
@@ -23,6 +28,9 @@ interface Session {
 interface EvalRun { passRate: number | null; completedAt: string | null; }
 interface DriftReport { id: string; severity: string; resolvedAt: string | null; agent: { name: string }; createdAt: string; }
 interface Violation { id: string; severity: string; resolvedAt: string | null; policy: { name: string }; createdAt: string; }
+interface TimeseriesPoint { date: string; conversations: number; costUsd: number; }
+interface Overview { agents: number; sessions: number; evalRuns: number; }
+interface ApiKey { id: string; }
 
 function KpiCard({
   icon: Icon,
@@ -64,8 +72,27 @@ const envColors: Record<string, string> = {
   DEVELOPMENT: 'badge-blue',
 };
 
+const DAYS_OPTIONS = [7, 30, 90] as const;
+type DaysOption = typeof DAYS_OPTIONS[number];
+
+// Custom tooltip for recharts
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs shadow-xl">
+      <p className="text-gray-400 mb-2">{label}</p>
+      {payload.map((p) => (
+        <p key={p.name} style={{ color: p.color }} className="font-medium">
+          {p.name}: {p.name === 'Cost ($)' ? `$${p.value.toFixed(4)}` : p.value}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export function DashboardPage() {
   const user = getUser();
+  const [chartDays, setChartDays] = useState<DaysOption>(30);
 
   const { data: agents = [], isLoading: agentsLoading } = useQuery<Agent[]>({
     queryKey: ['agents'],
@@ -90,6 +117,21 @@ export function DashboardPage() {
   const { data: violations = [] } = useQuery<Violation[]>({
     queryKey: ['violations'],
     queryFn: () => api.get('/policies/violations').then((r) => r.data),
+  });
+
+  const { data: timeseries = [] } = useQuery<TimeseriesPoint[]>({
+    queryKey: ['analytics-timeseries', chartDays],
+    queryFn: () => api.get('/analytics/timeseries', { params: { days: chartDays } }).then((r) => r.data),
+  });
+
+  const { data: overview } = useQuery<Overview>({
+    queryKey: ['analytics-overview'],
+    queryFn: () => api.get('/analytics/overview').then((r) => r.data),
+  });
+
+  const { data: apiKeys = [] } = useQuery<ApiKey[]>({
+    queryKey: ['api-keys'],
+    queryFn: () => api.get('/org/keys').then((r) => r.data),
   });
 
   const isLoading = agentsLoading || sessionsLoading;
@@ -166,15 +208,34 @@ export function DashboardPage() {
 
   const recentSessions = sessions.slice(0, 5);
 
+  // Chart: label every 7th date for readability
+  const chartData = timeseries.map((pt, i) => ({
+    ...pt,
+    'Cost ($)': pt.costUsd,
+    Conversations: pt.conversations,
+    label: i % Math.max(1, Math.floor(timeseries.length / 7)) === 0
+      ? pt.date.slice(5)  // "MM-DD"
+      : '',
+  }));
+
+  const hasChartData = timeseries.some((pt) => pt.conversations > 0);
+
   return (
     <div>
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">
           Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'},{' '}
           {user?.name?.split(' ')[0]}
         </h1>
         <p className="text-sm text-gray-400 mt-1">Here's what your AI agents are doing for your business</p>
       </div>
+
+      {/* ── Onboarding Checklist ─────────────────────────────────────────────── */}
+      <OnboardingChecklist
+        agentCount={overview?.agents ?? agents.length}
+        apiKeyCount={apiKeys.length}
+        sessionCount={overview?.sessions ?? sessions.length}
+      />
 
       {/* ── KPI Cards ────────────────────────────────────────────────────────── */}
       {isLoading ? (
@@ -214,6 +275,54 @@ export function DashboardPage() {
           />
         </div>
       )}
+
+      {/* ── Time-series Chart ──────────────────────────────────────────────── */}
+      <div className="card mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold text-white">Conversation Volume & Cost</h2>
+          <div className="flex gap-1 bg-gray-800/60 p-1 rounded-lg border border-gray-700">
+            {DAYS_OPTIONS.map((d) => (
+              <button
+                key={d}
+                onClick={() => setChartDays(d)}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  chartDays === d ? 'bg-brand-600 text-white' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+        </div>
+        {!hasChartData ? (
+          <div className="h-40 flex items-center justify-center text-gray-600 text-sm">
+            No conversation data yet. Start logging sessions to see trends.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+              <defs>
+                <linearGradient id="colorConv" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6d28d9" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#6d28d9" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="left" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v}`} />
+              <Tooltip content={<ChartTooltip />} />
+              <Legend wrapperStyle={{ fontSize: '12px', color: '#9ca3af' }} />
+              <Area yAxisId="left" type="monotone" dataKey="Conversations" stroke="#7c3aed" strokeWidth={2} fill="url(#colorConv)" dot={false} />
+              <Area yAxisId="right" type="monotone" dataKey="Cost ($)" stroke="#10b981" strokeWidth={2} fill="url(#colorCost)" dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
 
       {/* ── Agent Health Table ────────────────────────────────────────────────── */}
       <div className="card mb-6">

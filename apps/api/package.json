@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "@types/swagger-jsdoc": "^6.0.4",
+    "@types/swagger-ui-express": "^4.1.8",
     "axios": "^1.13.6",
     "bcryptjs": "^2.4.3",
     "bull": "^4.16.3",
@@ -22,6 +24,8 @@
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^8.0.1",
     "semver": "^7.6.3",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
     "uuid": "^11.0.5",
     "winston": "^3.17.0",
     "zod": "^3.24.1"

@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, getErrorMessage } from '../lib/api';
 import { PageHeader } from '../components/PageHeader';
 import { Modal } from '../components/Modal';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
-import { GitBranch, Plus, Trash2, Github, Copy, Check } from 'lucide-react';
+import { GitBranch, Plus, Trash2, Github, Copy, Check, Bell } from 'lucide-react';
 import { format } from 'date-fns';
+
+interface OrgSettings { slackWebhookUrl: string | null; }
 
 interface Integration { id: string; type: string; name: string; isActive: boolean; installedAt: string; _count: { webhookEvents: number }; }
 
@@ -93,10 +95,34 @@ export function IntegrationsPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ type: 'GITHUB', name: '', config: JSON.stringify(CONFIG_TEMPLATES.GITHUB, null, 2) });
   const [error, setError] = useState('');
+  const [slackUrl, setSlackUrl] = useState('');
+  const [slackSaved, setSlackSaved] = useState(false);
+  const [slackError, setSlackError] = useState('');
 
   const { data: integrations = [], isLoading } = useQuery<Integration[]>({
     queryKey: ['integrations'],
     queryFn: () => api.get('/integrations').then((r) => r.data),
+  });
+
+  const { data: orgSettings } = useQuery<OrgSettings>({
+    queryKey: ['org-settings'],
+    queryFn: () => api.get('/org/settings').then((r) => r.data as OrgSettings),
+  });
+
+  useEffect(() => {
+    if (orgSettings !== undefined) {
+      setSlackUrl(orgSettings.slackWebhookUrl ?? '');
+    }
+  }, [orgSettings]);
+
+  const saveSlackUrl = useMutation({
+    mutationFn: (url: string | null) => api.patch('/org/settings', { slackWebhookUrl: url }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['org-settings'] });
+      setSlackSaved(true);
+      setTimeout(() => setSlackSaved(false), 3000);
+    },
+    onError: (err) => setSlackError(getErrorMessage(err)),
   });
 
   const create = useMutation({
@@ -114,6 +140,9 @@ export function IntegrationsPage() {
     setForm({ ...form, type, config: JSON.stringify(CONFIG_TEMPLATES[type] ?? {}, null, 2) });
   }
 
+  // Pre-fill slack URL from loaded org settings
+  const currentSlackUrl = orgSettings?.slackWebhookUrl ?? '';
+
   const guide = CONFIG_GUIDES[form.type];
 
   return (
@@ -123,6 +152,54 @@ export function IntegrationsPage() {
         description="Connect GitHub, GitLab, Slack, and other services"
         action={<button onClick={() => setOpen(true)} className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> Add Integration</button>}
       />
+
+      {/* ── Slack Alerts card ──────────────────────────────────────────────── */}
+      <div className="card mb-6">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="w-9 h-9 rounded-xl bg-green-900/30 flex items-center justify-center flex-shrink-0">
+            <Bell className="w-4 h-4 text-green-400" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-white">Slack Alerts</h3>
+            <p className="text-sm text-gray-400 mt-0.5">
+              Receive instant Slack messages when drift is detected (HIGH/CRITICAL) or a policy violation occurs.
+            </p>
+          </div>
+        </div>
+        {slackError && <p className="text-xs text-red-400 mb-3">{slackError}</p>}
+        <div className="flex gap-3">
+          <input
+            type="url"
+            placeholder={currentSlackUrl || 'https://hooks.slack.com/services/T.../B.../...'}
+            value={slackUrl}
+            onChange={(e) => setSlackUrl(e.target.value)}
+            className="input flex-1 text-sm"
+          />
+          <button
+            onClick={() => saveSlackUrl.mutate(slackUrl || null)}
+            disabled={saveSlackUrl.isPending}
+            className="btn-primary whitespace-nowrap flex items-center gap-2"
+          >
+            {slackSaved ? <><Check className="w-4 h-4" /> Saved</> : saveSlackUrl.isPending ? 'Saving…' : 'Save URL'}
+          </button>
+          {currentSlackUrl && (
+            <button
+              onClick={() => { setSlackUrl(''); saveSlackUrl.mutate(null); }}
+              className="btn-secondary text-xs"
+              title="Remove Slack webhook"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-gray-600 mt-2">
+          Create a Slack app at{' '}
+          <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">
+            api.slack.com/apps
+          </a>
+          {' '}→ Incoming Webhooks → Add New Webhook to Workspace
+        </p>
+      </div>
 
       {isLoading ? <div className="text-gray-500 text-sm">Loading…</div> :
         integrations.length === 0 ? <EmptyState icon={GitBranch} title="No integrations" description="Connect GitHub or GitLab to enable CI/CD checks and webhook events." /> :

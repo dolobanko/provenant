@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import swaggerUi from 'swagger-ui-express';
 import { authRouter } from './routes/auth';
 import { agentsRouter } from './routes/agents';
 import { environmentsRouter } from './routes/environments';
@@ -17,6 +18,8 @@ import { orgRouter } from './routes/org';
 import { analyticsRouter } from './routes/analytics';
 import { webhooksRouter } from './routes/webhooks';
 import { agentTracesRouter } from './routes/agentTraces';
+import { proxyRouter } from './routes/proxy';
+import { swaggerSpec } from './lib/swagger';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './lib/logger';
 import { prisma } from './lib/prisma';
@@ -47,6 +50,14 @@ app.use('/api/org', orgRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/agent-traces', agentTracesRouter);
+app.use('/api/proxy', proxyRouter);
+
+// ── OpenAPI docs ──────────────────────────────────────────────────────────────
+app.get('/api/docs/spec', (_req, res) => res.json(swaggerSpec));
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customSiteTitle: 'Provenant API Docs',
+  customCss: '.swagger-ui .topbar { display: none }',
+}));
 
 app.use(errorHandler);
 

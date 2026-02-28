@@ -11,6 +11,32 @@ import type { IRouter } from 'express';
 export const orgRouter: IRouter = Router();
 orgRouter.use(authenticate);
 
+// ─── Org Settings ─────────────────────────────────────────────────────────────
+
+orgRouter.get('/settings', async (req: AuthRequest, res, next) => {
+  try {
+    const org = await prisma.org.findUnique({
+      where: { id: req.user!.orgId },
+      select: { id: true, name: true, slug: true, slackWebhookUrl: true, createdAt: true },
+    });
+    res.json(org);
+  } catch (err) { next(err); }
+});
+
+orgRouter.patch('/settings', auditLog('org.settings.update', 'Org'), async (req: AuthRequest, res, next) => {
+  try {
+    const body = z.object({
+      slackWebhookUrl: z.string().url().nullable().optional(),
+    }).parse(req.body);
+    const org = await prisma.org.update({
+      where: { id: req.user!.orgId },
+      data: { ...(body.slackWebhookUrl !== undefined && { slackWebhookUrl: body.slackWebhookUrl }) },
+      select: { id: true, name: true, slug: true, slackWebhookUrl: true },
+    });
+    res.json(org);
+  } catch (err) { next(err); }
+});
+
 // ─── API Keys ─────────────────────────────────────────────────────────────────
 
 orgRouter.get('/keys', async (req: AuthRequest, res, next) => {

@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { auditLog } from '../middleware/audit';
 import { fireWebhook } from '../lib/webhooks';
+import { sendSlackAlert, driftAlertPayload } from '../services/notifications';
 
 import type { IRouter } from 'express';
 export const driftRouter: IRouter = Router();
@@ -74,6 +75,18 @@ driftRouter.post('/reports', auditLog('drift.report', 'DriftReport'), async (req
         severity: body.severity,
         driftScore: body.driftScore,
       }).catch(() => {});
+      // Slack alert
+      prisma.org.findUnique({ where: { id: req.user!.orgId }, select: { slackWebhookUrl: true } })
+        .then((org) => {
+          if (org?.slackWebhookUrl) {
+            sendSlackAlert(org.slackWebhookUrl, driftAlertPayload({
+              agentName: (report as unknown as { agent: { name: string } }).agent.name,
+              severity: body.severity,
+              summary: `Drift score: ${body.driftScore.toFixed(2)}`,
+              baseUrl: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+            }));
+          }
+        }).catch(() => {});
     }
     res.status(201).json(report);
   } catch (err) { next(err); }

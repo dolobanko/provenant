@@ -1,0 +1,25 @@
+{
+  "name": "@provenant/mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for Provenant — connect Claude Desktop / Claude Code to your agent observability platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "provenant-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "axios": "^1.7.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.3"
+  },
+  "keywords": ["mcp", "provenant", "ai", "agents", "observability"],
+  "license": "MIT"
+}

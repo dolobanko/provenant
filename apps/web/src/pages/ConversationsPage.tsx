@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
@@ -101,12 +101,25 @@ const STATUS_FILTERS = ['All', 'ACTIVE', 'COMPLETED'] as const;
 
 export function ConversationsPage() {
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [agentFilter, setAgentFilter] = useState<string>('All');
 
+  // Debounce search input by 400ms before sending to API
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const { data: sessions = [], isLoading } = useQuery<Session[]>({
-    queryKey: ['sessions'],
-    queryFn: () => api.get('/sessions').then((r) => r.data),
+    queryKey: ['sessions', debouncedSearch, statusFilter, agentFilter],
+    queryFn: () => api.get('/sessions', {
+      params: {
+        ...(debouncedSearch.trim() && { q: debouncedSearch.trim() }),
+        ...(statusFilter !== 'All' && { status: statusFilter }),
+        ...(agentFilter !== 'All' && { agentId: agentFilter }),
+      },
+    }).then((r) => r.data),
   });
 
   const { data: agents = [] } = useQuery<Agent[]>({
@@ -114,20 +127,9 @@ export function ConversationsPage() {
     queryFn: () => api.get('/agents').then((r) => r.data),
   });
 
-  const filtered = useMemo(() => {
-    let list = sessions;
-    if (statusFilter !== 'All') list = list.filter((s) => s.status === statusFilter);
-    if (agentFilter !== 'All') list = list.filter((s) => s.agent?.id === agentFilter);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (s) =>
-          s.agent?.name?.toLowerCase().includes(q) ||
-          s.id.toLowerCase().includes(q),
-      );
-    }
-    return list;
-  }, [sessions, statusFilter, agentFilter, search]);
+  // Client-side filter is now only needed for agent dropdown (already sent to API)
+  // but we keep the variable name `filtered` for compatibility
+  const filtered = useMemo(() => sessions, [sessions]);
 
   return (
     <div>

@@ -10,6 +10,9 @@ import { Bot, Plus, ArrowLeft, Check, AlertTriangle, GitCompare, Cpu, ExternalLi
 import { QuickStart } from '../components/QuickStart';
 import { format, formatDistanceToNow } from 'date-fns';
 import clsx from 'clsx';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from 'recharts';
 
 interface Version { id: string; version: string; semver: string; changelog: string; status: string; modelId: string; systemPrompt?: string; publishedAt: string; createdAt: string; }
 interface Agent { id: string; name: string; slug: string; description: string; tags: string[]; status: string; modelFamily: string; versions: Version[]; _count: { versions: number; sessions: number; evalRuns: number }; }
@@ -324,6 +327,14 @@ export function AgentDetailPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agent', id] }),
   });
 
+  // Eval trend for this agent
+  interface EvalRunItem { id: string; passRate: number | null; completedAt: string | null; agentVersion: { semver: string } | null; }
+  const { data: evalRuns = [] } = useQuery<EvalRunItem[]>({
+    queryKey: ['eval-runs', id],
+    queryFn: () => api.get('/evals/runs', { params: { agentId: id } }).then((r) => r.data),
+    enabled: !!id,
+  });
+
   if (isLoading) return <div className="text-gray-500 text-sm">Loading…</div>;
   if (!agent) return <div className="text-red-400 text-sm">Agent not found</div>;
 
@@ -428,6 +439,38 @@ export function AgentDetailPage() {
             </table>
           )
         )}
+
+        {/* Eval trend chart — shown inside Versions tab when data available */}
+        {activeTab === 'versions' && (() => {
+          const completedRuns = evalRuns
+            .filter((r) => r.passRate != null && r.completedAt)
+            .sort((a, b) => new Date(a.completedAt!).getTime() - new Date(b.completedAt!).getTime())
+            .slice(-20)
+            .map((r) => ({
+              date: new Date(r.completedAt!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+              passRate: Math.round((r.passRate ?? 0) * 100),
+              semver: r.agentVersion?.semver ?? 'unknown',
+            }));
+          if (completedRuns.length === 0) return null;
+          return (
+            <div className="mt-6 border-t border-gray-800 pt-5">
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">Eval Pass Rate Trend</h3>
+              <ResponsiveContainer width="100%" height={160}>
+                <LineChart data={completedRuns} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip
+                    formatter={(value: number) => [`${value}%`, 'Pass Rate']}
+                    contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px', fontSize: '12px' }}
+                    labelStyle={{ color: '#9ca3af' }}
+                  />
+                  <Line type="monotone" dataKey="passRate" stroke="#7c3aed" strokeWidth={2} dot={{ fill: '#7c3aed', r: 3 }} activeDot={{ r: 5 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          );
+        })()}
 
         {/* AI Authorship tab */}
         {activeTab === 'authorship' && (
