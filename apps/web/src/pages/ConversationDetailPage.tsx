@@ -138,9 +138,16 @@ function TurnBubble({ turn }: { turn: Turn }) {
     const rawText = typeof turn.content === 'string'
       ? turn.content
       : JSON.stringify(turn.content, null, 2);
-    // Extract a readable preview: first non-empty line, strip JSON chars
+
+    // Detect meaninglessly empty content: {}, [], "", null, "null", "{}"
+    const trimmed = rawText.trim();
+    const isEmpty = trimmed === '{}' || trimmed === '[]' || trimmed === '' || trimmed === 'null' || trimmed === '"null"' || trimmed === '""';
+
+    // Extract a readable preview: first non-empty, non-brace line
     const firstLine = rawText.split('\n').find((l) => l.trim() && l.trim() !== '{' && l.trim() !== '}' && l.trim() !== '[]') ?? '';
-    const toolPreview = firstLine.replace(/[{}"[\]]/g, '').trim().slice(0, 80) || rawText.slice(0, 80);
+    const toolPreview = isEmpty
+      ? 'No output recorded'
+      : firstLine.replace(/[{}"[\]]/g, '').trim().slice(0, 80) || rawText.slice(0, 80);
 
     return (
       <div className="flex items-start gap-2 max-w-2xl">
@@ -148,10 +155,14 @@ function TurnBubble({ turn }: { turn: Turn }) {
           <span className="text-green-400 text-xs">⚙</span>
         </div>
         <div className="flex-1 min-w-0">
-          <CollapsibleBlock label="Tool result" preview={toolPreview} defaultOpen>
-            <pre className="text-xs text-green-300 font-mono whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
-              {rawText}
-            </pre>
+          <CollapsibleBlock label="Tool result" preview={toolPreview} defaultOpen={!isEmpty}>
+            {isEmpty ? (
+              <p className="text-xs text-gray-600 italic">No output was recorded for this tool call.</p>
+            ) : (
+              <pre className="text-xs text-green-300 font-mono whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+                {rawText}
+              </pre>
+            )}
           </CollapsibleBlock>
           <div className="flex items-center gap-2 mt-1 text-xs text-gray-600">
             {turn.latencyMs != null && (
@@ -391,6 +402,24 @@ export function ConversationDetailPage() {
             {session.turns.map((turn) => (
               <TurnBubble key={turn.id} turn={turn} />
             ))}
+            {/* Note if all turns are tool/system with empty content — no real dialogue */}
+            {session.turns.every((t) => {
+              const raw = typeof t.content === 'string' ? t.content : JSON.stringify(t.content);
+              const trimmed = raw.trim();
+              return (
+                (t.role === 'TOOL' || t.role === 'SYSTEM') &&
+                (trimmed === '{}' || trimmed === '[]' || trimmed === '' || trimmed === 'null')
+              );
+            }) && (
+              <div className="text-center py-6 border-t border-gray-800 mt-6">
+                <p className="text-sm text-gray-500">
+                  This session has no user or assistant messages — only internal tool calls with no recorded output.
+                </p>
+                <p className="text-xs text-gray-600 mt-1">
+                  This can happen when a session is created via the API but no conversation turns are logged.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
