@@ -1,0 +1,14 @@
+{
+  "name": "@provenant/hooks-claude",
+  "version": "0.1.0",
+  "description": "Provenant integration for Claude Code — records every tool call as a session",
+  "main": "index.js",
+  "bin": {
+    "provenant-claude-install": "./install.js"
+  },
+  "scripts": {
+    "install-hooks": "node install.js"
+  },
+  "keywords": ["provenant", "claude-code", "observability", "hooks"],
+  "license": "MIT"
+}
