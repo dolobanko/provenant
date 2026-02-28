@@ -1,36 +1,46 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Bot, Globe, Settings, FlaskConical, Activity,
-  MessageSquare, GitBranch, Shield, ClipboardList, LogOut, ArrowUpDown, ChevronRight, Key, Users, Webhook,
+  LayoutDashboard, Bot, MessageSquare, BarChart2,
+  ArrowUpDown, Shield, ClipboardList, Settings,
+  LogOut, ChevronRight, ChevronDown, Key, Users, Webhook, GitBranch, Globe,
 } from 'lucide-react';
 import { clearAuth, getUser } from '../lib/auth';
 import clsx from 'clsx';
 
-const nav = [
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+const mainNav = [
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Overview' },
+  { to: '/conversations', icon: MessageSquare, label: 'Conversations' },
   { to: '/agents', icon: Bot, label: 'Agents' },
-  { to: '/environments', icon: Globe, label: 'Environments' },
-  { to: '/promotions', icon: ArrowUpDown, label: 'Promotions' },
-  { to: '/configs', icon: Settings, label: 'Configs' },
-  { to: '/evals', icon: FlaskConical, label: 'Evaluations' },
-  { to: '/drift', icon: Activity, label: 'Drift Detection' },
-  { to: '/sessions', icon: MessageSquare, label: 'Sessions' },
-  { to: '/integrations', icon: GitBranch, label: 'Integrations' },
+  { to: '/reports', icon: BarChart2, label: 'Reports' },
+  { to: '/promotions', icon: ArrowUpDown, label: 'Deployments' },
   { to: '/policies', icon: Shield, label: 'Policies' },
   { to: '/audit', icon: ClipboardList, label: 'Audit Log' },
+];
+
+const settingsNav = [
   { to: '/api-keys', icon: Key, label: 'API Keys' },
   { to: '/team', icon: Users, label: 'Team' },
   { to: '/webhooks', icon: Webhook, label: 'Webhooks' },
+  { to: '/integrations', icon: GitBranch, label: 'Integrations' },
+  { to: '/environments', icon: Globe, label: 'Environments' },
+  { to: '/configs', icon: Settings, label: 'Configs' },
 ];
 
 export function Layout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const user = getUser();
+  const [settingsOpen, setSettingsOpen] = useState(
+    settingsNav.some((item) => location.pathname.startsWith(item.to)),
+  );
 
   function handleLogout() {
     clearAuth();
     navigate('/login');
   }
+
+  const isSettingsActive = settingsNav.some((item) => location.pathname.startsWith(item.to));
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -46,7 +56,7 @@ export function Layout() {
         </div>
 
         <nav className="flex-1 p-3 overflow-y-auto space-y-0.5">
-          {nav.map(({ to, icon: Icon, label }) => (
+          {mainNav.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
@@ -63,6 +73,46 @@ export function Layout() {
               {label}
             </NavLink>
           ))}
+
+          {/* Settings collapsible group */}
+          <div className="pt-1">
+            <button
+              onClick={() => setSettingsOpen(!settingsOpen)}
+              className={clsx(
+                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors w-full',
+                isSettingsActive
+                  ? 'bg-brand-600/20 text-brand-400 font-medium'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800',
+              )}
+            >
+              <Settings className="w-4 h-4 flex-shrink-0" />
+              <span className="flex-1 text-left">Settings</span>
+              <ChevronDown
+                className={clsx('w-3 h-3 transition-transform', settingsOpen && 'rotate-180')}
+              />
+            </button>
+            {settingsOpen && (
+              <div className="ml-3 mt-0.5 space-y-0.5 border-l border-gray-800 pl-3">
+                {settingsNav.map(({ to, icon: Icon, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    className={({ isActive }) =>
+                      clsx(
+                        'flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs transition-colors',
+                        isActive
+                          ? 'bg-brand-600/20 text-brand-400 font-medium'
+                          : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800',
+                      )
+                    }
+                  >
+                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
         </nav>
 
         <div className="p-3 border-t border-gray-800">
@@ -81,7 +131,7 @@ export function Layout() {
         </div>
       </aside>
 
-      {/* Main */}
+      {/* Main content */}
       <main className="flex-1 overflow-y-auto bg-gray-950">
         <div className="max-w-7xl mx-auto p-8">
           <Outlet />

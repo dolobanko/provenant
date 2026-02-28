@@ -276,22 +276,22 @@ export function LandingPage() {
         <div className="relative max-w-4xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-brand-900/40 border border-brand-800/50 text-brand-400 text-xs font-medium mb-8">
             <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse" />
-            Built for AI engineering teams
+            Business intelligence for AI agents
           </div>
 
           <h1 className="text-4xl md:text-6xl font-bold text-white leading-tight tracking-tight mb-6">
-            Full observability for<br />
+            Know what your AI agents<br />
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 to-blue-400">
-              AI agents in production
+              are doing for your business
             </span>
           </h1>
 
           <p className="text-lg text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-            One-line instrumentation captures every session, tool call, multi-turn loop, and token.
-            Built-in drift detection, eval gating, and prompt versioning — no boilerplate.
+            Provenant gives product and operations teams complete visibility into their AI agents —
+            in plain English, not logs.
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-10">
             <Link
               to="/register"
               className="btn-primary flex items-center gap-2 px-6 py-3 text-base"
@@ -304,6 +304,33 @@ export function LandingPage() {
             >
               Sign in to dashboard
             </Link>
+          </div>
+
+          {/* Value props */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-16 text-left">
+            {[
+              {
+                emoji: '💬',
+                title: 'Every Conversation Captured',
+                desc: 'See what your agents say to customers, searchable and readable',
+              },
+              {
+                emoji: '📊',
+                title: 'Business Metrics, Not Traces',
+                desc: 'Cost per agent, quality scores, response times — in terms your whole team understands',
+              },
+              {
+                emoji: '🚀',
+                title: 'Safe Deployments',
+                desc: 'Promote agent updates through environments with approval workflows',
+              },
+            ].map((vp) => (
+              <div key={vp.title} className="bg-gray-900/60 border border-gray-800 rounded-xl p-5">
+                <div className="text-2xl mb-3">{vp.emoji}</div>
+                <h3 className="font-semibold text-white text-sm mb-1.5">{vp.title}</h3>
+                <p className="text-xs text-gray-400 leading-relaxed">{vp.desc}</p>
+              </div>
+            ))}
           </div>
 
           {/* Hero code snippet */}

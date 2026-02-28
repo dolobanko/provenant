@@ -16,6 +16,9 @@ import { EvalRunPage } from './pages/EvalRunPage';
 import { DriftPage } from './pages/DriftPage';
 import { SessionsPage } from './pages/SessionsPage';
 import { SessionDetailPage } from './pages/SessionDetailPage';
+import { ConversationsPage } from './pages/ConversationsPage';
+import { ConversationDetailPage } from './pages/ConversationDetailPage';
+import { ReportsPage } from './pages/ReportsPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import { PoliciesPage } from './pages/PoliciesPage';
 import { AuditPage } from './pages/AuditPage';
@@ -47,7 +50,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
-        {/* Authenticated app — all dashboard routes nested under RequireAuth + Layout */}
+        {/* Authenticated app */}
         <Route
           path="/dashboard"
           element={
@@ -67,22 +70,34 @@ export default function App() {
             </RequireAuth>
           }
         >
+          {/* Core BI pages */}
+          <Route path="conversations" element={<ConversationsPage />} />
+          <Route path="conversations/:id" element={<ConversationDetailPage />} />
+          <Route path="reports" element={<ReportsPage />} />
+
+          {/* Agent management */}
           <Route path="agents" element={<AgentsPage />} />
           <Route path="agents/:id" element={<AgentDetailPage />} />
-          <Route path="environments" element={<EnvironmentsPage />} />
+
+          {/* Operations */}
           <Route path="promotions" element={<PromotionsPage />} />
-          <Route path="configs" element={<ConfigsPage />} />
-          <Route path="evals" element={<EvalsPage />} />
-          <Route path="evals/runs/:id" element={<EvalRunPage />} />
-          <Route path="drift" element={<DriftPage />} />
-          <Route path="sessions" element={<SessionsPage />} />
-          <Route path="sessions/:id" element={<SessionDetailPage />} />
-          <Route path="integrations" element={<IntegrationsPage />} />
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="audit" element={<AuditPage />} />
+
+          {/* Settings group */}
           <Route path="api-keys" element={<ApiKeysPage />} />
           <Route path="team" element={<TeamPage />} />
           <Route path="webhooks" element={<WebhooksPage />} />
+          <Route path="integrations" element={<IntegrationsPage />} />
+          <Route path="environments" element={<EnvironmentsPage />} />
+          <Route path="configs" element={<ConfigsPage />} />
+
+          {/* Legacy / hidden (keep working) */}
+          <Route path="sessions" element={<SessionsPage />} />
+          <Route path="sessions/:id" element={<SessionDetailPage />} />
+          <Route path="evals" element={<EvalsPage />} />
+          <Route path="evals/runs/:id" element={<EvalRunPage />} />
+          <Route path="drift" element={<DriftPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
