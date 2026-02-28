@@ -91,14 +91,15 @@ integrationsRouter.post('/webhook/:integrationId', async (req, res, next) => {
       },
     });
 
-    // Process asynchronously
-    processWebhookEvent(event.id).catch((e) => logger.error('Webhook processing error', { e }));
+    // Process asynchronously — pass headers for agent-trace detection
+    processWebhookEvent(event.id, req.headers as Record<string, string | string[] | undefined>)
+      .catch((e) => logger.error('Webhook processing error', { e }));
 
     res.json({ received: true, eventId: event.id });
   } catch (err) { next(err); }
 });
 
-async function processWebhookEvent(eventId: string) {
+async function processWebhookEvent(eventId: string, rawHeaders?: Record<string, string | string[] | undefined>) {
   const event = await prisma.webhookEvent.findUnique({ where: { id: eventId }, include: { integration: true } });
   if (!event) return;
 
@@ -106,6 +107,38 @@ async function processWebhookEvent(eventId: string) {
 
   try {
     logger.info('Processing webhook event', { type: event.eventType, integrationId: event.integrationId });
+
+    // ── Agent Trace ingestion ──────────────────────────────────────────────────
+    let payload: Record<string, unknown> = {};
+    try { payload = JSON.parse(event.payload) as Record<string, unknown>; } catch { /* non-JSON */ }
+
+    const isAgentTrace =
+      rawHeaders?.['x-agent-trace'] === 'true' ||
+      ('agent-trace' in payload) ||
+      (typeof payload.specVersion === 'string' && typeof payload.traceId === 'string');
+
+    if (isAgentTrace) {
+      const traceData = (payload['agent-trace'] as Record<string, unknown> | undefined) ?? payload;
+      const orgId = event.integration.orgId;
+      await prisma.agentTrace.create({
+        data: {
+          orgId,
+          agentVersionId: typeof traceData.agentVersionId === 'string' ? traceData.agentVersionId : null,
+          specVersion: typeof traceData.specVersion === 'string' ? traceData.specVersion : '0.1.0',
+          traceId: typeof traceData.traceId === 'string' ? traceData.traceId : eventId,
+          vcsType: typeof traceData.vcsType === 'string' ? traceData.vcsType : null,
+          vcsRevision: typeof traceData.vcsRevision === 'string' ? traceData.vcsRevision : null,
+          toolName: typeof traceData.toolName === 'string' ? traceData.toolName : null,
+          toolVersion: typeof traceData.toolVersion === 'string' ? traceData.toolVersion : null,
+          files: Array.isArray(traceData.files) ? JSON.stringify(traceData.files) : '[]',
+          metadata: typeof traceData.metadata === 'object' ? JSON.stringify(traceData.metadata) : '{}',
+          source: 'WEBHOOK',
+        },
+      });
+      logger.info('Agent trace ingested from webhook', { eventId, orgId });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     await prisma.webhookEvent.update({
       where: { id: eventId },
       data: { status: 'PROCESSED', processedAt: new Date() },

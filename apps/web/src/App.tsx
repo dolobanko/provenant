@@ -26,6 +26,7 @@ import { PromotionsPage } from './pages/PromotionsPage';
 import { ApiKeysPage } from './pages/ApiKeysPage';
 import { TeamPage } from './pages/TeamPage';
 import { WebhooksPage } from './pages/WebhooksPage';
+import { AgentTracesPage } from './pages/AgentTracesPage';
 import { PricingPage } from './pages/PricingPage';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
 import { getUser } from './lib/auth';
@@ -91,6 +92,9 @@ export default function App() {
           <Route path="integrations" element={<IntegrationsPage />} />
           <Route path="environments" element={<EnvironmentsPage />} />
           <Route path="configs" element={<ConfigsPage />} />
+
+          {/* AI Provenance */}
+          <Route path="agent-traces" element={<AgentTracesPage />} />
 
           {/* Legacy / hidden (keep working) */}
           <Route path="sessions" element={<SessionsPage />} />

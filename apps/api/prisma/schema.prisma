@@ -46,6 +46,7 @@ model Org {
   apiKeys      ApiKey[]
   invitations  Invitation[]
   webhooks     Webhook[]
+  agentTraces  AgentTrace[]
 
   @@map("orgs")
 }
@@ -129,6 +130,7 @@ model AgentVersion {
   evalRuns      EvalRun[]
   driftReports  DriftReport[]
   sessions      Session[]
+  agentTraces   AgentTrace[]
 
   @@unique([agentId, semver])
   @@map("agent_versions")
@@ -500,4 +502,26 @@ model AuditLog {
   createdAt    DateTime @default(now())
 
   @@map("audit_logs")
+}
+
+// ─── Agent Trace (AI Code Attribution) ───────────────────────────────────────
+
+model AgentTrace {
+  id             String        @id @default(uuid())
+  orgId          String
+  org            Org           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  agentVersionId String?
+  agentVersion   AgentVersion? @relation(fields: [agentVersionId], references: [id])
+  specVersion    String        @default("0.1.0")
+  traceId        String
+  vcsType        String?
+  vcsRevision    String?
+  toolName       String?
+  toolVersion    String?
+  files          String        @default("[]")
+  metadata       String        @default("{}")
+  source         String        @default("API")
+  createdAt      DateTime      @default(now())
+
+  @@map("agent_traces")
 }

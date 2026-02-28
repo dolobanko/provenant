@@ -16,6 +16,7 @@ import { auditRouter } from './routes/audit';
 import { orgRouter } from './routes/org';
 import { analyticsRouter } from './routes/analytics';
 import { webhooksRouter } from './routes/webhooks';
+import { agentTracesRouter } from './routes/agentTraces';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './lib/logger';
 import { prisma } from './lib/prisma';
@@ -45,6 +46,7 @@ app.use('/api/audit', auditRouter);
 app.use('/api/org', orgRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/webhooks', webhooksRouter);
+app.use('/api/agent-traces', agentTracesRouter);
 
 app.use(errorHandler);
 

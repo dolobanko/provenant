@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Bot, MessageSquare, BarChart2,
-  ArrowUpDown, Shield, ClipboardList, Settings,
+  ArrowUpDown, Shield, ClipboardList, Settings, Cpu,
   LogOut, ChevronRight, ChevronDown, Key, Users, Webhook, GitBranch, Globe,
 } from 'lucide-react';
 import { clearAuth, getUser } from '../lib/auth';
@@ -16,6 +16,7 @@ const mainNav = [
   { to: '/promotions', icon: ArrowUpDown, label: 'Deployments' },
   { to: '/policies', icon: Shield, label: 'Policies' },
   { to: '/audit', icon: ClipboardList, label: 'Audit Log' },
+  { to: '/agent-traces', icon: Cpu, label: 'AI Provenance' },
 ];
 
 const settingsNav = [
