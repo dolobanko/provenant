@@ -31,18 +31,20 @@
 ---
 
 - **Integrations**
-- [Integrations](10-integrations.md)
-
----
-
-- **Reference**
-- [API Reference](13-api-reference.md)
+- [GitHub / GitLab / Slack / Webhooks](10-integrations.md)
+- [Claude Code Hooks](19-claude-code-hooks.md)
+- [ChatGPT Extension](20-chatgpt-extension.md)
 
 ---
 
 - **Developer Tools**
 - [Authentication & API Keys](14-authentication.md)
-- [Team Management](15-team-management.md)
-- [SDKs](16-sdks.md)
+- [SDKs — Python & TypeScript](16-sdks.md)
 - [CI/CD & GitHub Actions](17-ci-cd.md)
+- [Team Management](15-team-management.md)
 - [Troubleshooting](18-troubleshooting.md)
+
+---
+
+- **Reference**
+- [API Reference](13-api-reference.md)
