@@ -281,7 +281,7 @@ export function LandingPage() {
 
           <h1 className="text-4xl md:text-6xl font-bold text-white leading-tight tracking-tight mb-6">
             Know what your AI agents<br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 to-blue-400">
+            <span className="text-brand-400">
               are doing for your business
             </span>
           </h1>
