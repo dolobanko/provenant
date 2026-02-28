@@ -13,7 +13,8 @@ model User {
   id           String   @id @default(uuid())
   email        String   @unique
   name         String
-  passwordHash String
+  passwordHash String?
+  githubId     String?  @unique
   role         String   @default("MEMBER")
   orgId        String
   org          Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)

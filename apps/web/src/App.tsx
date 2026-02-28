@@ -21,6 +21,7 @@ import { ApiKeysPage } from './pages/ApiKeysPage';
 import { TeamPage } from './pages/TeamPage';
 import { WebhooksPage } from './pages/WebhooksPage';
 import { PricingPage } from './pages/PricingPage';
+import { AuthCallbackPage } from './pages/AuthCallbackPage';
 import { getUser } from './lib/auth';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -38,6 +39,7 @@ export default function App() {
         {/* Auth pages */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
         {/* Authenticated app — all dashboard routes nested under RequireAuth + Layout */}
         <Route
